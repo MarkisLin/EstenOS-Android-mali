@@ -35,9 +35,15 @@ fun ProtonPage(
         host,
         title = "Versiones de Proton",
         eyebrow = "Ajustes",
-        lede = "Descarga e instala una compilación ARM64 de Proton y luego selecciónala por juego en Steam > Propiedades > Compatibilidad.",
+        lede = "EstenOS instala automáticamente un Proton ARM64 base al preparar Steam. GE-Proton y proton-cachyos son alternativas opcionales para juegos que necesiten otra compatibilidad.",
         onBack = onBack,
     ) {
+        Text(
+            "No necesitas instalar ninguno de los dos para empezar. Si un juego funciona con el Proton automático, déjalo así; instala una alternativa solo cuando quieras probar compatibilidad distinta.",
+            fontSize = 12.sp,
+            color = colors.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+        )
         if (!runtimeReady) Text(
             "Instala el entorno Linux desde Ajustes antes de administrar herramientas de compatibilidad.",
             fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
@@ -67,13 +73,27 @@ fun ProtonPage(
                         }
                     }
                 }
-                if (busyId == row.id) Column(modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
+                if (busyId == row.id) Column(modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                     Text(
-                        if (stage != null && percent >= 0) "$stage · $percent%" else stage ?: "Iniciando…",
-                        fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(bottom = 5.dp),
+                        stage ?: "Preparando instalación…",
+                        fontSize = 13.sp,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 3.dp),
                     )
-                    if (percent >= 0) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp))
-                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
+                    Text(
+                        if (percent >= 0) "$percent% completado" else "Trabajando…",
+                        fontSize = 12.sp,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    if (percent >= 0) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(7.dp))
+                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(7.dp))
+                    Text(
+                        "Puedes cambiar de app o apagar la pantalla; EstenOS continuará en segundo plano.",
+                        fontSize = 11.sp,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
         }
