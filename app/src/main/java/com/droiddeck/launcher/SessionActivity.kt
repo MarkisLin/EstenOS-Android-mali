@@ -960,8 +960,14 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             83 -> "Steam terminó con código 0 antes de mostrar el primer fotograma. Ahora se conserva esta pantalla para que puedas ver y compartir el motivo real del arranque fallido."
             else -> null
         }
+        val message = when {
+            pipelineHint != null && hint != null && !pipelineHint.contains(hint) -> "$pipelineHint\n\n$hint"
+            pipelineHint != null -> pipelineHint
+            hint != null -> hint
+            else -> "Steam se detuvo inesperadamente. Comparte los registros con un informe de error o vuelve a intentarlo."
+        }
         loading.showEnded(
-            pipelineHint ?: hint ?: "Steam se detuvo inesperadamente. Comparte los registros con un informe de error o vuelve a intentarlo.",
+            message,
             "Código de salida $status · ${SessionState.logFile?.path ?: "sin registro"}",
         )
         focusEndedScreen()
