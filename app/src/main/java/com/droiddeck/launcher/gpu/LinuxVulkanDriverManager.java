@@ -112,7 +112,9 @@ public class LinuxVulkanDriverManager {
             if (m != null) {
                 String profile = m.optString("maliProfile", "");
                 if (deviceProfile != null && deviceProfile.id.equals(profile)) score += 5000;
-                if (MaliKbaseProfiles.RELEASE_SOURCE_LABEL.equals(m.optString("source", ""))) score += 500;
+                String trustedSource = m.optString("source", "");
+                if (MaliKbaseProfiles.RELEASE_SOURCE_LABEL.equals(trustedSource)
+                        || MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL.equals(trustedSource)) score += 500;
                 String q = m.optString("qualification", "").toLowerCase(Locale.US);
                 if ("stable".equals(q) || "release".equals(q)) score += 80;
                 else if ("rc".equals(q)) score += 60;
@@ -294,10 +296,17 @@ public class LinuxVulkanDriverManager {
      */
     public String installReleaseDriver(Uri zipUri, String displayName, String source, String tag) throws IOException {
         String id = installDriver(zipUri, displayName);
-        if (!MaliKbaseProfiles.RELEASE_SOURCE_LABEL.equals(source)) return id;
+        final JSONObject trusted;
         try {
-            JSONObject trusted = MaliKbaseProfiles.trustedReleaseMetadata(tag);
-            if (trusted == null) throw new IllegalArgumentException("El perfil de la versión PanVK-Kbase no está validado por esta compilación de DroidDeck: " + tag);
+            if (MaliKbaseProfiles.RELEASE_SOURCE_LABEL.equals(source)) {
+                trusted = MaliKbaseProfiles.trustedReleaseMetadata(tag);
+            } else if (MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL.equals(source)) {
+                trusted = MaliKbaseProfiles.trustedPinnedG57Metadata(tag);
+            } else {
+                return id;
+            }
+            if (trusted == null) throw new IllegalArgumentException(
+                    "El perfil de la versión Mali no está validado por esta compilación de DroidDeck: " + source + " " + tag);
             String lib = installedLibraryName(id);
             if (lib == null || !(lib.toLowerCase(Locale.US).contains("panfrost") || lib.toLowerCase(Locale.US).contains("panvk"))) {
                 throw new IllegalArgumentException("La versión PanVK-Kbase no contenía el ICD PanVK/Panfrost esperado");
