@@ -1,0 +1,1128 @@
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/CMakeLists.txt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/CMakeLists.txt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/CMakeLists.txt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/CMakeLists.txt	2026-09-30 02:20:07.951897201 +0000
+@@ -101,8 +101,8 @@
+ add_library(wayland-server SHARED IMPORTED)
+ set_target_properties(wayland-server PROPERTIES IMPORTED_LOCATION
+         ${CMAKE_CURRENT_SOURCE_DIR}/prebuilt/lib/libwayland-server.so)
+-# Vulkan is loaded at runtime via adrenotools (Turnip), not linked directly - so the
+-# compositor uses Turnip's driver, which supports dmabuf import (drm_format_modifier).
++# Vulkan is loaded at runtime rather than linked directly. Adreno can use an AdrenoTools/Turnip
++# driver; Mali uses Android's system Vulkan. The compositor probes dma-buf capabilities at runtime.
+ target_link_libraries(bannerwayland
+         wayland-server
+         adrenotools
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/compositor.c /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/compositor.c
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/compositor.c	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/compositor.c	2026-09-30 02:15:24.571724788 +0000
+@@ -777,7 +777,12 @@
+     s->buf_w = b->width;
+     s->buf_h = b->height;
+     s->buf_alpha = (b->format & 0xff) == 'A';
+-    s->has_content = b->img != NULL;
++    /* A Mali/system-Vulkan compositor may be unable to import the client's dma-buf itself, while
++     * banner_ahb_v1 still handed us the underlying Android gralloc buffer. That frame is valid
++     * content: it can be scanned out directly through SurfaceControl without ever becoming a
++     * compositor VkImage. Upstream only marked imported images as content, which made this intended
++     * layer-only fallback unreachable on a host driver without dma-buf import. */
++    s->has_content = b->img != NULL || ahb_swapchain_has_ahb(b);
+     g_stat_dmabuf++;
+     const int announced_now = !s->announced_vulkan;
+     if (!s->announced_vulkan) {
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.c /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.c
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.c	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.c	2026-09-30 02:12:10.131263885 +0000
+@@ -30,9 +30,9 @@
+     }
+     if (!g_handle) {
+         g_handle = dlopen("libvulkan.so", RTLD_LOCAL | RTLD_NOW);
+-        __android_log_print(ANDROID_LOG_WARN, TAG,
+-                            "no adrenotools driver -> system libvulkan handle=%p "
+-                            "(dmabuf import likely unsupported)", g_handle);
++        __android_log_print(ANDROID_LOG_INFO, TAG,
++                            "system Vulkan backend handle=%p; external-memory capabilities are probed at device init",
++                            g_handle);
+     }
+     if (!g_handle) return -1;
+     g_gip = (PFN_vkGetInstanceProcAddr)dlsym(g_handle, "vkGetInstanceProcAddr");
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.h /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.h
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.h	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_loader.h	2026-09-30 02:13:51.168109732 +0000
+@@ -1,15 +1,16 @@
+ #ifndef VK_LOADER_H
+ #define VK_LOADER_H
+ /*
+- * Loads Turnip via adrenotools (the same path the app uses for the guest renderer)
+- * and resolves every Vulkan entry point through its vkGetInstanceProcAddr - NOT the
+- * process-default system Adreno driver, which lacks VK_EXT_image_drm_format_modifier /
+- * dmabuf import. All compositor Vulkan calls go through g_vk.* .
++ * Loads either a custom Adreno/Turnip driver through adrenotools or Android's system Vulkan
++ * loader (the Mali-first path), then resolves every entry point through vkGetInstanceProcAddr.
++ * Device-init code probes the external-memory/modifier capabilities instead of assuming a vendor.
++ * All compositor Vulkan calls go through g_vk.* .
+  */
+ #define VK_USE_PLATFORM_ANDROID_KHR
+ #include <vulkan/vulkan.h>
+ 
+-#define VK_GLOBAL_FUNCS(X) X(CreateInstance) X(EnumerateInstanceExtensionProperties)
++#define VK_GLOBAL_FUNCS(X) X(CreateInstance) X(EnumerateInstanceExtensionProperties) \
++    X(EnumerateInstanceVersion)
+ 
+ #define VK_INSTANCE_FUNCS(X) \
+     X(EnumeratePhysicalDevices) X(GetPhysicalDeviceProperties) \
+@@ -47,8 +48,8 @@
+ };
+ extern struct vk_api g_vk;
+ 
+-/* Open Turnip via adrenotools (falls back to system libvulkan if any arg is NULL)
+- * and load global entry points. Returns 0 on success. */
++/* Open a custom Adreno driver via adrenotools when all three args are supplied; otherwise open
++ * Android's system libvulkan. Load global entry points and return 0 on success. */
+ int vk_loader_open(const char *driver_path, const char *library_name,
+                    const char *native_lib_dir);
+ void vk_loader_load_instance(VkInstance instance);
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_present.c /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_present.c
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_present.c	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/cpp/waylandcomp/src/vk_present.c	2026-09-30 02:14:05.381939805 +0000
+@@ -1,5 +1,5 @@
+-/* Android-surface render backend - see vk_present.h. Uses Turnip via vk_loader
+- * (g_vk.*), not the process-default system Adreno driver. */
++/* Android-surface render backend - see vk_present.h. The Mali-first fork can use either
++ * Adreno/Turnip or Android's system Vulkan loader; every call goes through vk_loader (g_vk.*). */
+ #define _POSIX_C_SOURCE 200809L
+ #include "vk_present.h"
+ #include "vk_loader.h"
+@@ -61,6 +61,11 @@
+  * the frame-generation ring): a blit converts every client format into it, the chains read RGBA. */
+ #define SCENE_FMT VK_FORMAT_R8G8B8A8_UNORM
+ static VkPhysicalDeviceMemoryProperties g_memprops;
++/* Host-driver capabilities. System Mali Vulkan is allowed to start without the Linux dma-buf
++ * extension set; dma-buf paths then disable themselves while shm/AHB-capable paths can continue. */
++static int g_has_dmabuf_import;
++static int g_has_drm_modifiers;
++static uint32_t g_instance_api = VK_API_VERSION_1_0;
+ 
+ static VkSurfaceKHR g_surface;
+ static VkSwapchainKHR g_swapchain;
+@@ -383,7 +388,7 @@
+ static int dev_init(void) {
+     if (g_dev_state != 0) return g_dev_state == 1 ? 0 : -1;
+ 
+-    /* Load Turnip (adrenotools) and its entry points - NOT the system driver. */
++    /* Load the selected host Vulkan backend: Turnip on Adreno, system Vulkan on Mali/others. */
+     if (vk_loader_open(g_driver_path, g_library_name, g_native_lib_dir) != 0) {
+         LOGE("present: vk_loader_open failed"); g_dev_state = -1; return -1;
+     }
+@@ -411,11 +416,18 @@
+                    "generation %s)", g_colorspace_ext ? "enables" : "has no",
+                    g_colorspace_ext ? "is possible where the screen surface offers one" : "is not possible: tone-mapped instead");
+     }
+-    /* 1.3 like the X11 renderer's instance: the frame-generation probe (framegen_engine.cpp)
+-     * queries VkPhysicalDeviceVulkan12Features, and a 1.1 instance may be answered as 1.1. */
++    /* Ask for the newest API the loader itself exposes, capped at 1.3. Upstream hard-coded 1.3,
++     * which rejects older-but-usable Android Vulkan stacks before we can even probe them. */
++    if (g_vk.EnumerateInstanceVersion) {
++        uint32_t loader_api = VK_API_VERSION_1_0;
++        if (g_vk.EnumerateInstanceVersion(&loader_api) == VK_SUCCESS)
++            g_instance_api = loader_api < VK_API_VERSION_1_3 ? loader_api : VK_API_VERSION_1_3;
++    }
+     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+                              .pApplicationName = "banner-wayland-present",
+-                             .apiVersion = VK_API_VERSION_1_3};
++                             .apiVersion = g_instance_api};
++    banner_log("gpu", "host Vulkan API %u.%u.%u requested",
++               VK_VERSION_MAJOR(g_instance_api), VK_VERSION_MINOR(g_instance_api), VK_VERSION_PATCH(g_instance_api));
+     VkInstanceCreateInfo ici = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+                                 .pApplicationInfo = &app,
+                                 .enabledExtensionCount = n_inst_exts,
+@@ -450,18 +462,40 @@
+     }
+     g_vk.GetPhysicalDeviceMemoryProperties(g_pd, &g_memprops);
+ 
+-    /* Verify the dmabuf-import extensions are present, and log any that are missing. */
+-    const char *dev_exts[7] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_KHR_external_memory_fd",
+-                               "VK_EXT_external_memory_dma_buf", "VK_EXT_image_drm_format_modifier",
+-                               "VK_KHR_image_format_list", NULL, NULL};
+-    uint32_t n_dev_exts = 5;
++    /* Build the device extension list from what this driver actually exposes. Upstream enabled the
++     * whole Turnip dma-buf set unconditionally; on a Mali system driver missing one of those,
++     * vkCreateDevice failed and the compositor never started. Swapchain is required; the external
++     * memory/modifier set is optional and gates only dma-buf import. */
++    const char *dev_exts[9] = {NULL};
++    uint32_t n_dev_exts = 0;
+     uint32_t ne = 0;
+     g_vk.EnumerateDeviceExtensionProperties(g_pd, NULL, &ne, NULL);
+     VkExtensionProperties *exts = calloc(ne ? ne : 1, sizeof(*exts));
+     g_vk.EnumerateDeviceExtensionProperties(g_pd, NULL, &ne, exts);
+-    for (unsigned i = 0; i < 5; i++)
+-        if (!has_ext(exts, ne, dev_exts[i]))
+-            LOGE("present: driver MISSING %s (dmabuf import will fail)", dev_exts[i]);
++    if (!has_ext(exts, ne, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
++        free(exts);
++        LOGE("present: driver MISSING %s", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
++        g_dev_state = -1;
++        return -1;
++    }
++    dev_exts[n_dev_exts++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
++    const char *dmabuf_exts[] = {
++        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
++        VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
++        VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
++        VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME,
++    };
++    g_has_dmabuf_import = 1;
++    for (unsigned i = 0; i < sizeof(dmabuf_exts) / sizeof(dmabuf_exts[0]); i++) {
++        if (has_ext(exts, ne, dmabuf_exts[i])) {
++            dev_exts[n_dev_exts++] = dmabuf_exts[i];
++        } else {
++            g_has_dmabuf_import = 0;
++            banner_log("gpu", "host driver has no %s; dma-buf import path disabled", dmabuf_exts[i]);
++        }
++    }
++    g_has_drm_modifiers = g_has_dmabuf_import;
++    banner_log("gpu", "host dma-buf import: %s", g_has_dmabuf_import ? "available" : "unavailable");
+     /* HDR sessions only: the HDR10 swapchain (frame generation) can carry the game's metadata. */
+     int want_hdr_md = 0;
+     if (banner_color_requested()) {
+@@ -481,7 +515,8 @@
+      * storage-image features enabled at device creation; the probe hands back the pNext chain
+      * for them, or NULL on a device that cannot run it (then Win-FG Native alone is offered). A
+      * driver that rejects the chain costs nothing: retried once without it, exactly as before. */
+-    const void *fg_features = vkp_framegen_device_features(g_inst, vk_loader_gipa(), g_pd);
++    const void *fg_features = g_instance_api >= VK_API_VERSION_1_2
++        ? vkp_framegen_device_features(g_inst, vk_loader_gipa(), g_pd) : NULL;
+     VkDeviceCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = fg_features,
+                               .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci,
+                               .enabledExtensionCount = n_dev_exts, .ppEnabledExtensionNames = dev_exts};
+@@ -880,7 +915,8 @@
+ 
+ /* Can the driver create and import this format/modifier with the requested image usage? */
+ static int modifier_importable(VkFormat fmt, uint64_t modifier, VkImageUsageFlags usage) {
+-    if (!g_vk.GetPhysicalDeviceImageFormatProperties2) return 1; /* can't ask; the create will tell */
++    if (!g_has_dmabuf_import || !g_has_drm_modifiers) return 0;
++    if (!g_vk.GetPhysicalDeviceImageFormatProperties2) return 0;
+     VkPhysicalDeviceExternalImageFormatInfo ext = {
+         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
+@@ -899,7 +935,8 @@
+ }
+ 
+ int vkp_dmabuf_modifiers(uint32_t drm_format, uint64_t *out, int max) {
+-    if (max <= 0 || dev_init() != 0 || !g_vk.GetPhysicalDeviceFormatProperties2) return 0;
++    if (max <= 0 || dev_init() != 0 || !g_has_dmabuf_import || !g_has_drm_modifiers ||
++        !g_vk.GetPhysicalDeviceFormatProperties2) return 0;
+     VkFormat fmt = drm_to_vk(drm_format);
+     VkDrmFormatModifierPropertiesListEXT list = {
+         .sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT};
+@@ -941,7 +978,7 @@
+ struct vkp_image *vkp_image_import_dmabuf(int fd, uint32_t drm_format, uint64_t modifier, int w, int h,
+                                           uint32_t stride, uint32_t offset, int as_blit_dst) {
+     if (modifier == MOD_INVALID || w <= 0 || h <= 0) return NULL;
+-    if (dev_init() != 0) return NULL;
++    if (dev_init() != 0 || !g_has_dmabuf_import || !g_has_drm_modifiers) return NULL;
+ 
+     struct vkp_image *img = calloc(1, sizeof(*img));
+     if (!img) return NULL;
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/DriverMenus.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/DriverMenus.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/DriverMenus.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/DriverMenus.kt	2026-09-30 02:12:08.765790852 +0000
+@@ -16,6 +16,8 @@
+ import com.droiddeck.launcher.gpu.TurnipReleases
+ import com.droiddeck.launcher.session.SessionService
+ import com.droiddeck.launcher.session.SessionPrefs
++import com.droiddeck.launcher.core.DeviceSupport
++import com.droiddeck.launcher.runtime.LinuxRuntime
+ import com.droiddeck.launcher.ui.DriverRow
+ 
+ /**
+@@ -42,7 +44,12 @@
+         val lm = LinuxVulkanDriverManager(activity)
+         fun origin(id: String) = if (TurnipReleases.isDownloaded(activity, id)) DriverRow.DOWNLOADED else DriverRow.IMPORTED
+         linuxRows = LinuxVulkanDriver.optionValues(activity).map { id ->
+-            if (id.isEmpty()) DriverRow("", "Runtime default", "the Turnip built into the runtime", false)
++            if (id.isEmpty()) DriverRow(
++                "", "Runtime default",
++                LinuxRuntime.vulkanIcd(activity)?.let { "${it.name} · ${DeviceSupport.family().name}" }
++                    ?: "no matching built-in ICD for ${DeviceSupport.family().name}",
++                false,
++            )
+             else DriverRow(
+                 id, lm.getDriverName(id),
+                 listOfNotNull(
+@@ -59,7 +66,7 @@
+         androidRows = buildList {
+             add(DriverRow(
+                 TurnipDriver.AUTO, "Auto - picked by GPU",
+-                if (auto == "system") "system Vulkan: no bundled build for this GPU" else "${td.displayName(auto)} (bundled)",
++                if (auto == "system") "system Vulkan · ${DeviceSupport.family().name} host path" else "${td.displayName(auto)} (bundled)",
+                 false,
+             ))
+             for (id in td.visibleBundled()) add(DriverRow(id, td.displayName(id), td.driverVersion(id), true, DriverRow.BUNDLED))
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/MainActivity.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/MainActivity.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/MainActivity.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/MainActivity.kt	2026-09-30 02:12:09.460720277 +0000
+@@ -468,8 +468,10 @@
+                 )
+                 showNonAdreno?.let { release ->
+                     ConfirmDialog(
+-                        title = "Not an Adreno GPU",
+-                        text = "Turnip supports Adreno GPUs. On ${com.droiddeck.launcher.core.DeviceSupport.gpuName()}, Steam may show a black screen. Download: ${"%.0f".format(release.size / 1e6)} MB.",
++                        title = "GPU backend not ready",
++                        text = "${com.droiddeck.launcher.core.DeviceSupport.supportSummary()}. " +
++                            "This Mali-first build currently targets Mali and keeps Adreno as a compatibility path. " +
++                            "Download anyway: ${"%.0f".format(release.size / 1e6)} MB.",
+                         confirm = "Install anyway",
+                         onConfirm = { showNonAdreno = null; install(release) },
+                         onDismiss = { showNonAdreno = null },
+@@ -823,7 +825,7 @@
+                 onShape = { shape -> SessionPrefs.setShapeMode(this, shape); shapeMode = shape },
+                 onHdr = { on -> SessionPrefs.setHdr(this, mode, on); hdrOn = on },
+                 onSelectLinux = { id -> SessionPrefs.setLinuxDriver(this, mode, id); drivers.refreshDrivers() },
+-                onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a Linux runtime driver (-Linux zip)")) },
++                onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a Linux Vulkan ICD (AArch64 glibc zip)")) },
+                 onRemoveLinux = { id -> drivers.deleteDriver(id, linux = true) },
+                 onRefreshReleases = { drivers.checkLatestTurnip() },
+                 onDownloadDriver = { name -> drivers.downloadReleaseDriver(name) },
+@@ -1047,21 +1049,20 @@
+             Thread({ checkCatalog() }, "catalog").start()
+             return
+         }
+-        // The runtime draws with Turnip, an Adreno driver: on Mali, Xclipse or PowerVR the
+-        // compositor gets no usable Vulkan device and a session is sound over a black screen.
+-        // Said before the download, not after it; the user may still go ahead.
+-        if (installed == null && !com.droiddeck.launcher.core.DeviceSupport.adreno()) { showNonAdreno = release; return }
++        // Mali is a first-class target in this fork. Only GPU families for which neither the
++        // Mali path nor the retained Adreno path applies get the pre-download warning.
++        if (installed == null && !com.droiddeck.launcher.core.DeviceSupport.supportedForThisBuild()) { showNonAdreno = release; return }
+         install(release)
+     }
+ 
+-    /** Starts a session; with no runtime on a non-Adreno, the same warning Setup gives comes first, before any download. */
++    /** Starts a session; unknown/non-target GPU families get the same warning before any download. */
+     private fun startSession(intent: Intent, steamSession: Boolean = false) {
+         refreshPhantomStatus()
+         if (steamSession && PhantomProcessLimit.blocksSteam(phantomProcessStatus)) {
+             showPhantomGate = true
+             return
+         }
+-        val warn = installed == null && !com.droiddeck.launcher.core.DeviceSupport.adreno()
++        val warn = installed == null && !com.droiddeck.launcher.core.DeviceSupport.supportedForThisBuild()
+         if (warn && available != null) showNonAdreno = available
+         else startActivity(intent)
+     }
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt	2026-09-30 02:08:45.364332692 +0000
+@@ -703,10 +703,20 @@
+         // the evdev codes we inject.
+         FileUtils.copyAsset(this, "wayland/keymap.xkb", File(runtimeDir, "keymap.xkb"))
+ 
+-        // Turnip, not the system Adreno driver: importing the dma-bufs gamescope commits needs
+-        // VK_EXT_image_drm_format_modifier, which the system driver does not implement.
++        // Host GPU backend: upstream always forced Turnip here. Mali must not load an Adreno
++        // driver, so the Mali-first fork uses Android's system Vulkan stack on ARM GPUs while
++        // preserving Turnip for Qualcomm. The guest Linux Vulkan driver is a separate choice.
+         val turnip = TurnipDriver(this)
+-        val driverId = if (CompositorHost.isStarted) null else turnip.install()
++        val driverId = if (CompositorHost.isStarted) null else when (
++            com.droiddeck.launcher.core.DeviceSupport.hostVulkanBackend()
++        ) {
++            com.droiddeck.launcher.core.DeviceSupport.HostVulkanBackend.ADRENO_TURNIP -> turnip.install()
++            com.droiddeck.launcher.core.DeviceSupport.HostVulkanBackend.SYSTEM_VULKAN -> null
++        }
++        if (!CompositorHost.isStarted) {
++            Log.i(TAG, "host GPU backend: ${com.droiddeck.launcher.core.DeviceSupport.family()} -> " +
++                (if (driverId != null) "Turnip/$driverId" else "system Vulkan"))
++        }
+ 
+         // The output size belongs to the session, not to the Surface: gamescope's display is
+         // sized once when the session starts and cannot change. A foldable recreates the Surface
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt	2026-09-30 02:17:15.032807722 +0000
+@@ -100,9 +100,16 @@
+         }
+ 
+         h("GPU")
++        k("GPU family", DeviceSupport.family().name)
++        k("Host Vulkan backend", DeviceSupport.hostVulkanBackend().name)
++        k("GPU support", DeviceSupport.supportSummary())
+         k("KGSL gpu_model", readSys("/sys/class/kgsl/kgsl-3d0/gpu_model"))
+         k("KGSL chip id", readSys("/sys/class/kgsl/kgsl-3d0/gpu_chipid"))
+-        k("System Vulkan ICD", if (File("/vendor/lib64/hw/vulkan.adreno.so").exists()) "/vendor/lib64/hw/vulkan.adreno.so" else "not at the usual path")
++        k("Mali device", listOf("/dev/mali0", "/sys/class/misc/mali0").firstOrNull { File(it).exists() } ?: "not visible")
++        k("System Vulkan HAL", listOf(
++            "/vendor/lib64/hw/vulkan.mali.so", "/vendor/lib/hw/vulkan.mali.so",
++            "/vendor/lib64/hw/vulkan.adreno.so", "/vendor/lib/hw/vulkan.adreno.so",
++        ).firstOrNull { File(it).exists() } ?: "not at a known path")
+ 
+         h("Display")
+         k("Session output", SessionState.outputSize?.let { "${it.first}x${it.second}" })
+@@ -115,13 +122,20 @@
+         h("Drivers")
+         val turnip = TurnipDriver(context)
+         val androidChoice = SessionPrefs.androidDriver(context)
+-        k("Display driver (chosen)", if (androidChoice.isEmpty()) "Auto -> ${turnip.autoId()}" else androidChoice)
+-        k("  name / version", "${turnip.displayName(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)} ${turnip.driverVersion(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)}".trim())
+-        k("  imported available", turnip.enumerateImported().ifEmpty { listOf("none") }.joinToString(", "))
++        if (DeviceSupport.hostVulkanBackend() == DeviceSupport.HostVulkanBackend.SYSTEM_VULKAN) {
++            k("Display driver (chosen)", "Android system Vulkan (${DeviceSupport.family().name})")
++            k("  AdrenoTools choice", if (androidChoice.isEmpty()) "ignored on this GPU family" else "$androidChoice (ignored on this GPU family)")
++        } else {
++            k("Display driver (chosen)", if (androidChoice.isEmpty()) "Auto -> ${turnip.autoId()}" else androidChoice)
++            k("  name / version", "${turnip.displayName(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)} ${turnip.driverVersion(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)}".trim())
++        }
++        k("  imported AdrenoTools available", turnip.enumerateImported().ifEmpty { listOf("none") }.joinToString(", "))
+         val lm = LinuxVulkanDriverManager(context)
+         for (m in listOf(SessionService.MODE_STEAM, SessionService.MODE_DESKTOP)) {
+             val id = SessionPrefs.linuxDriver(context, m)
+-            val label = if (id.isEmpty()) "runtime default (the Turnip built into the runtime)"
++            val runtimeDefault = LinuxRuntime.vulkanIcd(context)?.name
++                ?: "no matching ICD for ${DeviceSupport.family().name}"
++            val label = if (id.isEmpty()) "runtime default ($runtimeDefault)"
+             else "${lm.getDriverName(id)} ${lm.getDriverVersion(id)}".trim() +
+                 lm.getMinGlibc(id).let { if (it.isEmpty()) "" else " (glibc $it+)" } +
+                 if (lm.isInstalled(id)) "" else "  [MISSING - falls back to the runtime's own]"
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt	2026-09-30 02:08:44.896357923 +0000
+@@ -4,21 +4,107 @@
+ import java.io.File
+ 
+ /**
+- * Whether this device can draw a Linux session at all.
++ * GPU/backend detection for DroidDeck.
+  *
+- * The runtime draws with Turnip, an Adreno driver. On Mali, Xclipse and PowerVR the compositor
+- * gets no usable Vulkan device and a session comes up as sound over a black screen - a failure
+- * with nothing in it to read. The app cannot fix that, so it says so before the download rather
+- * than after it. Adreno is recognised by what only Qualcomm's stack has: the KGSL node, or the
+- * vendor's own Vulkan driver at its usual path.
++ * Upstream is built around Qualcomm's KGSL + Turnip path. This fork keeps that path for Adreno,
++ * but treats ARM Mali as a first-class target and deliberately selects Android's system Vulkan
++ * driver for the host compositor there. The Linux guest driver is selected separately.
+  */
+ object DeviceSupport {
+-    fun adreno(): Boolean =
+-        File("/sys/class/kgsl/kgsl-3d0").exists() || File("/vendor/lib64/hw/vulkan.adreno.so").exists()
++    enum class GpuFamily { ADRENO, MALI, XCLIPSE, POWERVR, UNKNOWN }
++    enum class HostVulkanBackend { ADRENO_TURNIP, SYSTEM_VULKAN }
+ 
+-    /** The chip as the device names it, for the card that explains the refusal. */
++    private val familyValue: GpuFamily by lazy { detectFamily() }
++
++    @JvmStatic
++    fun family(): GpuFamily = familyValue
++
++    @JvmStatic
++    fun adreno(): Boolean = family() == GpuFamily.ADRENO
++
++    @JvmStatic
++    fun mali(): Boolean = family() == GpuFamily.MALI
++
++    /** Mali is the primary target of this fork; Adreno remains as the upstream compatibility path. */
++    @JvmStatic
++    fun supportedForThisBuild(): Boolean = when (family()) {
++        GpuFamily.MALI, GpuFamily.ADRENO -> true
++        else -> false
++    }
++
++    /** Which Vulkan stack the Android compositor should load. */
++    @JvmStatic
++    fun hostVulkanBackend(): HostVulkanBackend = when (family()) {
++        GpuFamily.ADRENO -> HostVulkanBackend.ADRENO_TURNIP
++        else -> HostVulkanBackend.SYSTEM_VULKAN
++    }
++
++    @JvmStatic
++    fun supportSummary(): String = when (family()) {
++        GpuFamily.MALI -> "ARM Mali detected · Mali system-Vulkan path enabled (experimental)"
++        GpuFamily.ADRENO -> "Adreno detected · legacy Turnip/KGSL path enabled"
++        GpuFamily.XCLIPSE -> "Xclipse detected · no guest GPU backend yet"
++        GpuFamily.POWERVR -> "PowerVR detected · no guest GPU backend yet"
++        GpuFamily.UNKNOWN -> "GPU family not identified · system Vulkan fallback only"
++    }
++
++    /** The SoC/hardware name Android exposes, useful next to the GPU-family probe. */
++    @JvmStatic
+     fun gpuName(): String {
+-        val soc = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN } else null
++        val soc = if (Build.VERSION.SDK_INT >= 31) {
++            Build.SOC_MODEL.takeIf { it.isNotBlank() && it != Build.UNKNOWN }
++        } else null
+         return soc?.let { "$it (${Build.HARDWARE})" } ?: Build.HARDWARE.ifBlank { "this GPU" }
+     }
++
++    private fun detectFamily(): GpuFamily {
++        // Qualcomm: KGSL is specific enough that it wins over all filename heuristics.
++        if (existsAny(
++                "/sys/class/kgsl/kgsl-3d0",
++                "/dev/kgsl-3d0",
++                "/vendor/lib64/hw/vulkan.adreno.so",
++                "/vendor/lib/hw/vulkan.adreno.so",
++                "/system/vendor/lib64/hw/vulkan.adreno.so",
++                "/system/vendor/lib/hw/vulkan.adreno.so",
++            )) return GpuFamily.ADRENO
++
++        // ARM's proprietary Android stack normally exposes mali0 and/or a vulkan.mali/libGLES_mali
++        // module. Immortalis parts use the same Mali userspace naming, so they intentionally land
++        // here too.
++        if (existsAny(
++                "/dev/mali0",
++                "/sys/class/misc/mali0",
++                "/vendor/lib64/hw/vulkan.mali.so",
++                "/vendor/lib/hw/vulkan.mali.so",
++                "/system/vendor/lib64/hw/vulkan.mali.so",
++                "/system/vendor/lib/hw/vulkan.mali.so",
++                "/vendor/lib64/egl/libGLES_mali.so",
++                "/vendor/lib/egl/libGLES_mali.so",
++                "/system/vendor/lib64/egl/libGLES_mali.so",
++                "/system/vendor/lib/egl/libGLES_mali.so",
++            ) || hwModuleNameContains("mali")) return GpuFamily.MALI
++
++        if (hwModuleNameContains("powervr") || hwModuleNameContains("rogue")) return GpuFamily.POWERVR
++
++        // Samsung's Xclipse Vulkan HAL names vary by generation/OEM. Keep the probe conservative:
++        // only classify when the module itself says xclipse; otherwise UNKNOWN is safer than
++        // accidentally taking the wrong backend.
++        if (hwModuleNameContains("xclipse")) return GpuFamily.XCLIPSE
++
++        return GpuFamily.UNKNOWN
++    }
++
++    private fun existsAny(vararg paths: String): Boolean = paths.any { File(it).exists() }
++
++    private fun hwModuleNameContains(needle: String): Boolean {
++        val n = needle.lowercase()
++        val dirs = arrayOf(
++            File("/vendor/lib64/hw"), File("/vendor/lib/hw"),
++            File("/system/vendor/lib64/hw"), File("/system/vendor/lib/hw"),
++            File("/vendor/lib64/egl"), File("/vendor/lib/egl"),
++        )
++        return dirs.any { dir ->
++            runCatching { dir.listFiles()?.any { it.name.lowercase().contains(n) } == true }.getOrDefault(false)
++        }
++    }
+ }
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java	2026-09-30 02:10:29.260473723 +0000
+@@ -16,8 +16,8 @@
+  * screen ({@link TurnipDriver}), which every session ends in - and NOT interchangeable with it:
+  * these are glibc processes, that one is bionic.
+  *
+- * <p>"" (the default) means the driver the runtime was built with, at
+- * {@code usr/lib/libvulkan_freedreno.so} inside it - nothing is set and nothing is touched.
++ * <p>"" (the default) means the matching driver the runtime was built with - Freedreno/Turnip
++ * on Adreno, or a Mali/PanVK ICD when a Mali-enabled runtime provides one. Nothing is overridden.
+  * Otherwise the value is an imported driver's id ({@link LinuxVulkanDriverManager}), and the
+  * session is handed that driver's ICD manifest in {@code BL_VK_DRIVER}: the session script points
+  * the Vulkan loader at it with {@code VK_DRIVER_FILES} after checking both the manifest and the
+@@ -31,10 +31,9 @@
+     public static final String ENV = "BL_VK_DRIVER";
+ 
+     public static final String HELP_TEXT =
+-            "The driver the Steam client, the games it launches and the desktop's programs render on, "
+-            + "inside the Linux runtime. Imported \"-Linux\" Turnip zips only: these are Linux processes "
+-            + "and cannot load an Android or Wayland driver. Frames still reach the screen through the "
+-            + "display driver below. Takes effect at the next session start.";
++            "The Vulkan ICD used by Steam, gamescope, Proton and desktop programs inside the Linux runtime. "
++            + "This Mali-first build accepts AArch64 glibc libvulkan_*.so packages, including PanVK/Panfrost "
++            + "or Turnip. Android/bionic Vulkan HALs cannot be loaded by the guest. Takes effect at the next session start.";
+ 
+     private LinuxVulkanDriver() {}
+ 
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java	2026-09-30 02:17:15.032958500 +0000
+@@ -18,37 +18,32 @@
+ import java.util.ArrayList;
+ import java.util.Collections;
+ import java.util.List;
++import java.util.Locale;
+ import java.util.zip.ZipEntry;
+ import java.util.zip.ZipInputStream;
+ 
+ /**
+- * Imported LINUX Vulkan drivers: glibc Turnip ICDs ({@code Turnip-<tag>[-variant]-Linux.zip} from
+- * Banners-Turnip) for the runtime - the gamescope session that runs Valve's native ARM64 Steam
+- * client, and the labwc desktop beside it. This is the driver that DRAWS there: the client's own UI
+- * (OpenGL through the runtime's Zink), every game the client launches (D3D through Proton's
+- * DXVK/VKD3D) and everything on the desktop. Putting the frame on the screen stays the Android
+- * driver's job, in the app's compositor ({@link TurnipDriver}).
++ * Imported Linux Vulkan ICDs for the glibc runtime.
+  *
+- * <p>Not interchangeable with that one: the client and its games are glibc processes and cannot
+- * load a bionic object at all, and this one cannot be loaded by the app. The check that separates
+- * them is the libc the driver links against - {@code libc.so.6} here, {@code libc.so} there.
++ * <p>Upstream only accepted {@code libvulkan_freedreno*.so}, which made the driver manager itself
++ * Adreno-only. The Mali-first fork accepts any AArch64 glibc Vulkan ICD ({@code libvulkan_*.so})
++ * and keeps its original filename so PanVK/Panfrost drivers and their helper shared objects can be
++ * imported without pretending to be Freedreno.
+  *
+- * <p>Layout (under the app's files dir, which the session sees by its full host path):
++ * <p>Layout (under the app's files dir, visible at the same absolute path inside the guest):
+  * <pre>
+  *   files/linux_vulkan_drivers/&lt;id&gt;/
+- *       libvulkan_freedreno.so   the driver
+- *       icd.json                 generated Vulkan ICD manifest; library_path = the .so's ABSOLUTE path
+- *       meta.json                name / driverVersion / minGlibc, our own schema
++ *       libvulkan_*.so          selected ICD library (original filename retained)
++ *       *.so                    optional helper/dependency libraries from the zip
++ *       icd.json                generated manifest with absolute library_path
++ *       meta.json               name / version / libc / selected library
+  * </pre>
+- * The session gets {@code icd.json}'s path in {@code BL_VK_DRIVER} and exports it as
+- * {@code VK_DRIVER_FILES}, so nothing inside the runtime is modified and the choice is reversible.
+- *
+- * <p>Ported from Bannerlator's {@code LinuxVulkanDriverManager} (GPL-3.0), unchanged in behaviour.
+  */
+ public class LinuxVulkanDriverManager {
+     private static final String TAG = "LinuxVulkanDriver";
+     public static final String DIR_NAME = "linux_vulkan_drivers";
+-    public static final String LIB_NAME = "libvulkan_freedreno.so";
++    /** Old imports used this fixed name; retained for migration/compatibility. */
++    public static final String LEGACY_LIB_NAME = "libvulkan_freedreno.so";
+     public static final String ICD_NAME = "icd.json";
+     public static final String META_NAME = "meta.json";
+ 
+@@ -65,11 +60,12 @@
+         return new File(rootDir, id);
+     }
+ 
+-    /** Installed = has the .so AND the generated manifest (a half-extracted dir is never offered). */
++    /** Installed = generated manifest plus the selected library recorded in metadata (or legacy). */
+     public boolean isInstalled(String id) {
+         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return false;
+         File dir = getDriverDir(id);
+-        return new File(dir, LIB_NAME).isFile() && new File(dir, ICD_NAME).isFile();
++        String lib = installedLibraryName(id);
++        return lib != null && new File(dir, lib).isFile() && new File(dir, ICD_NAME).isFile();
+     }
+ 
+     /** Absolute path of the driver's ICD manifest, or null when the id isn't installed. */
+@@ -96,6 +92,14 @@
+         }
+     }
+ 
++    private String installedLibraryName(String id) {
++        JSONObject m = readMeta(id);
++        String lib = m != null ? m.optString("libraryName", "") : "";
++        if (!lib.isEmpty() && !lib.contains("/") && !lib.contains("..")) return lib;
++        File legacy = new File(getDriverDir(id), LEGACY_LIB_NAME);
++        return legacy.isFile() ? LEGACY_LIB_NAME : null;
++    }
++
+     public String getDriverName(String id) {
+         JSONObject m = readMeta(id);
+         String name = m != null ? m.optString("name", "") : "";
+@@ -113,17 +117,24 @@
+         return m != null ? m.optString("minGlibc", "") : "";
+     }
+ 
++    /** The selected ICD library's original basename. */
++    public String getLibraryName(String id) {
++        String name = installedLibraryName(id);
++        return name == null ? "" : name;
++    }
++
+     public void removeDriver(String id) {
+         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return;
+         Log.d(TAG, "removing imported Linux Vulkan driver " + id);
+         FileUtils.delete(getDriverDir(id));
+-        // A mode still set to this id falls back to the runtime's own driver at launch (logged there).
+     }
+ 
+     /**
+-     * Import a {@code -Linux.zip}. Returns the new driver id.
+-     * @throws IllegalArgumentException with a user-facing reason when the zip is not an importable
+-     *         Linux driver; {@link IOException} on read/extract failures.
++     * Import a zip containing an AArch64 glibc Vulkan ICD. Returns the new driver id.
++     *
++     * <p>All shared objects are retained because Mesa ICDs can ship helper libraries beside the
++     * main driver. The selected ICD must be named {@code libvulkan_*.so}; if metadata names a
++     * libraryName that candidate wins, otherwise PanVK/Panfrost/Turnip names are preferred.
+      */
+     public String installDriver(Uri zipUri, String displayName) throws IOException {
+         File tmpDir = new File(rootDir, ".tmp-" + System.currentTimeMillis());
+@@ -131,7 +142,7 @@
+         if (!tmpDir.mkdirs()) throw new IOException("cannot create " + tmpDir);
+         boolean keep = false;
+         try {
+-            String soName = null;
++            ArrayList<String> candidates = new ArrayList<>();
+             JSONObject zipMeta = null;
+             try (InputStream is = context.getContentResolver().openInputStream(zipUri);
+                  ZipInputStream zis = new ZipInputStream(is)) {
+@@ -139,81 +150,92 @@
+                 ZipEntry entry;
+                 while ((entry = zis.getNextEntry()) != null) {
+                     if (entry.isDirectory()) continue;
+-                    // Flatten: only the base name matters, and it also defeats zip-slip paths.
++                    // Flatten paths: dependencies still sit beside the ICD, and zip-slip is impossible.
+                     String base = new File(entry.getName()).getName();
+                     if (base.isEmpty()) continue;
+-                    if (base.startsWith("libvulkan_freedreno") && base.endsWith(".so")) {
+-                        if (soName != null) Log.w(TAG, "zip has several libvulkan_freedreno*.so; using the first (" + soName + ")");
+-                        else {
+-                            Files.copy(zis, new File(tmpDir, LIB_NAME).toPath(), StandardCopyOption.REPLACE_EXISTING);
+-                            soName = base;
+-                        }
+-                    } else if (base.equals(META_NAME)) {
++                    if (base.equals(META_NAME)) {
+                         try {
+-                            zipMeta = new JSONObject(new String(readAll(zis), StandardCharsets.UTF_8));
++                            byte[] data = readAll(zis);
++                            Files.write(new File(tmpDir, META_NAME + ".source").toPath(), data);
++                            zipMeta = new JSONObject(new String(data, StandardCharsets.UTF_8));
+                         } catch (Exception e) {
+                             Log.w(TAG, "meta.json unreadable, ignoring: " + e.getMessage());
+                         }
++                    } else if (base.endsWith(".so") || base.contains(".so.")) {
++                        Files.copy(zis, new File(tmpDir, base).toPath(), StandardCopyOption.REPLACE_EXISTING);
++                        if (isIcdLibraryName(base)) candidates.add(base);
+                     }
+-                    // The zip's own freedreno_icd.aarch64.json is dropped on purpose: its
+-                    // library_path is relative to itself, and we write an absolute one below.
++                    // Any zip-provided ICD json is intentionally ignored; an absolute manifest is
++                    // generated below so cwd and the rootfs's Vulkan loader do not affect resolution.
+                 }
+             }
+-            if (soName == null) {
+-                throw new IllegalArgumentException("No libvulkan_freedreno*.so in this zip. An Android "
+-                        + "(AdrenoTools) or -Wayland Turnip zip is not a Linux runtime driver.");
++
++            if (candidates.isEmpty()) {
++                throw new IllegalArgumentException("No Linux Vulkan ICD (libvulkan_*.so) in this zip. "
++                        + "The runtime needs an AArch64 glibc driver such as PanVK/Panfrost or Turnip.");
+             }
+-            File so = new File(tmpDir, LIB_NAME);
++
++            String declared = zipMeta != null ? zipMeta.optString("libraryName", "") : "";
++            String soName = candidates.contains(declared) ? declared : chooseCandidate(candidates);
++            File so = new File(tmpDir, soName);
+             if (!isAarch64Elf(so)) {
+                 throw new IllegalArgumentException(soName + " is not a 64-bit AArch64 ELF shared library.");
+             }
+-            // The one check that actually separates this from the bionic builds. Both sonames
+-            // are in the driver's .dynstr, so a byte scan is enough and needs no ELF parsing:
+-            // glibc's is versioned ("libc.so.6"), bionic's is not ("libc.so").
++            // This distinguishes a Linux/glibc ICD from an Android/bionic driver without needing
++            // a full ELF dynamic-section parser.
+             if (!containsAscii(so, "libc.so.6")) {
+-                throw new IllegalArgumentException(soName + " is not a glibc driver - it links Android's libc. "
+-                        + "The Linux runtime needs a \"-Linux\" zip; a plain or \"-Wayland\" Turnip cannot be "
+-                        + "loaded by the Steam client at all.");
++                throw new IllegalArgumentException(soName + " is not a glibc driver - it appears to link Android's libc. "
++                        + "The Linux runtime cannot load an Android Vulkan HAL/AdrenoTools driver.");
+             }
++
+             String kind = zipMeta != null ? zipMeta.optString("kind", "") : "";
+             if (!kind.isEmpty() && !"linux-vulkan-icd".equals(kind)) {
+-                Log.w(TAG, "meta.json says kind=" + kind + ", importing anyway (the binary is glibc)");
++                Log.w(TAG, "meta.json says kind=" + kind + ", importing anyway (binary is AArch64 glibc)");
+             }
+ 
+             String name = zipMeta != null ? zipMeta.optString("name", "") : "";
+             String version = zipMeta != null ? zipMeta.optString("driverVersion", "") : "";
+             String minGlibc = zipMeta != null ? zipMeta.optString("minGlibc", "") : "";
++            String gpuFamily = zipMeta != null ? zipMeta.optString("gpuFamily", "") : "";
+             if (name.isEmpty()) {
+-                name = displayName != null ? displayName : "linux-driver";
+-                if (name.toLowerCase().endsWith(".zip")) name = name.substring(0, name.length() - 4);
++                name = displayName != null ? displayName : soName;
++                if (name.toLowerCase(Locale.US).endsWith(".zip")) name = name.substring(0, name.length() - 4);
+             }
+             String id = uniqueId(sanitizeId(name));
+             File dir = getDriverDir(id);
+ 
+-            // ICD manifest: absolute library_path, so the loader never depends on cwd and the guest
+-            // reads it at the same path the app wrote (the files dir is bound into the session).
+             JSONObject icd = new JSONObject();
+             icd.put("file_format_version", "1.0.0");
+             JSONObject icdBody = new JSONObject();
+-            icdBody.put("library_path", new File(dir, LIB_NAME).getAbsolutePath());
+-            icdBody.put("api_version", "1.1.274");
++            icdBody.put("library_path", new File(dir, soName).getAbsolutePath());
++            icdBody.put("api_version", zipMeta != null ? zipMeta.optString("apiVersion", "1.1.274") : "1.1.274");
+             icd.put("ICD", icdBody);
+-            if (!FileUtils.writeString(new File(tmpDir, ICD_NAME), icd.toString(2))) throw new IOException("cannot write icd.json");
++            if (!FileUtils.writeString(new File(tmpDir, ICD_NAME), icd.toString(2))) {
++                throw new IOException("cannot write icd.json");
++            }
+ 
+             JSONObject meta = new JSONObject();
+-            meta.put("schemaVersion", 1);
++            meta.put("schemaVersion", 2);
+             meta.put("kind", "linux-vulkan-icd");
+             meta.put("name", name);
+             meta.put("driverVersion", version);
+             meta.put("libc", "glibc");
+             meta.put("minGlibc", minGlibc);
++            meta.put("libraryName", soName);
+             meta.put("sourceLibraryName", soName);
++            if (!gpuFamily.isEmpty()) meta.put("gpuFamily", gpuFamily);
+             meta.put("importedAt", System.currentTimeMillis());
+-            if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) throw new IOException("cannot write meta.json");
++            if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) {
++                throw new IOException("cannot write meta.json");
++            }
++            // Source metadata was only useful while choosing/importing; do not expose a confusing
++            // second meta file to users or future code.
++            FileUtils.delete(new File(tmpDir, META_NAME + ".source"));
+ 
+             if (!tmpDir.renameTo(dir)) throw new IOException("cannot move into " + dir);
+             keep = true;
+-            Log.i(TAG, "imported Linux Vulkan driver " + id + " (" + soName + ", minGlibc=" + minGlibc + ") -> " + dir);
++            Log.i(TAG, "imported Linux Vulkan driver " + id + " (" + soName
++                    + ", minGlibc=" + minGlibc + ", gpuFamily=" + gpuFamily + ") -> " + dir);
+             return id;
+         } catch (org.json.JSONException e) {
+             throw new IOException("manifest write failed: " + e.getMessage());
+@@ -222,6 +244,34 @@
+         }
+     }
+ 
++    private static boolean isIcdLibraryName(String base) {
++        String l = base.toLowerCase(Locale.US);
++        return l.startsWith("libvulkan_") && l.endsWith(".so")
++                && !l.contains("wrapper") && !l.contains("wsi");
++    }
++
++    private static String chooseCandidate(List<String> candidates) {
++        ArrayList<String> sorted = new ArrayList<>(candidates);
++        Collections.sort(sorted, (a, b) -> {
++            int rankA = candidateRank(a);
++            int rankB = candidateRank(b);
++            if (rankA != rankB) return Integer.compare(rankA, rankB);
++            return a.compareToIgnoreCase(b);
++        });
++        return sorted.get(0);
++    }
++
++    private static int candidateRank(String name) {
++        String l = name.toLowerCase(Locale.US);
++        if (l.contains("panvk")) return 0;
++        if (l.contains("panfrost")) return 1;
++        if (l.contains("mali")) return 2;
++        if (l.contains("freedreno") || l.contains("turnip")) return 3;
++        if (l.contains("virtio") || l.contains("venus")) return 4;
++        if (l.contains("lvp") || l.contains("swrast")) return 9;
++        return 5;
++    }
++
+     private String uniqueId(String base) {
+         String id = base;
+         int n = 2;
+@@ -276,7 +326,6 @@
+                     while (j < nb.length && buf[i + j] == nb[j]) j++;
+                     if (j == nb.length) return true;
+                 }
+-                // Keep the last needle-1 bytes so a match across a buffer boundary is still found.
+                 carry = Math.min(nb.length - 1, len);
+                 System.arraycopy(buf, len - carry, buf, 0, carry);
+             }
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/TurnipDriver.java /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/TurnipDriver.java
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/TurnipDriver.java	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/TurnipDriver.java	2026-09-30 02:08:47.125766266 +0000
+@@ -6,6 +6,7 @@
+ import android.util.Log;
+ 
+ import com.droiddeck.launcher.core.FileUtils;
++import com.droiddeck.launcher.core.DeviceSupport;
+ import com.droiddeck.launcher.core.TarZst;
+ import com.droiddeck.launcher.session.SessionPrefs;
+ 
+@@ -313,6 +314,12 @@
+     }
+ 
+     private String chooseByDevice() {
++        // Never guess an Adreno generation on Mali (the old fallback picked A7xx/A8xx purely from
++        // Android version). Mali uses the system Vulkan host path in this fork.
++        if (!DeviceSupport.adreno()) {
++            Log.i(TAG, "non-Adreno GPU (" + DeviceSupport.family() + "): compositor uses system Vulkan");
++            return null;
++        }
+         File override = new File(Environment.getExternalStorageDirectory(), OVERRIDE_FILE);
+         String forced = override.isFile() ? FileUtils.readString(override) : null;
+         if (forced != null) {
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java	2026-09-30 02:09:02.300054694 +0000
+@@ -7,6 +7,7 @@
+ import android.system.StructStat;
+ import android.system.StructUtsname;
+ import com.droiddeck.launcher.session.SessionPrefs;
++import com.droiddeck.launcher.core.DeviceSupport;
+ 
+ 
+ import java.io.File;
+@@ -87,15 +88,41 @@
+                 && prootLoader(context).isFile();
+     }
+ 
+-    /** The Vulkan ICD manifest the rootfs ships for the device GPU, or null when it has none. */
++    /**
++     * The Vulkan ICD manifest the rootfs ships for the detected GPU family, or null when the
++     * runtime has no matching driver. Upstream always preferred Freedreno, which makes Mali try
++     * to load an Adreno driver. The Mali-first fork refuses that mismatch and looks for PanVK /
++     * Panfrost / Mali-named ICDs instead.
++     */
+     public static File vulkanIcd(Context context) {
+         File icdDir = new File(rootDir(context), "usr/share/vulkan/icd.d");
+         File[] manifests = icdDir.listFiles((dir, name) -> name.endsWith(".json"));
+-        if (manifests == null) return null;
+-        for (File manifest : manifests) {
+-            if (manifest.getName().contains("freedreno")) return manifest;
++        if (manifests == null || manifests.length == 0) return null;
++
++        String[] preferred;
++        switch (DeviceSupport.family()) {
++            case MALI:
++                preferred = new String[]{"panvk", "panfrost", "mali"};
++                break;
++            case ADRENO:
++                preferred = new String[]{"freedreno", "turnip"};
++                break;
++            default:
++                preferred = new String[0];
++                break;
+         }
+-        return manifests.length > 0 ? manifests[0] : null;
++        for (String key : preferred) {
++            for (File manifest : manifests) {
++                if (manifest.getName().toLowerCase(java.util.Locale.US).contains(key)) return manifest;
++            }
++        }
++
++        // On a known GPU family, a mismatched vendor ICD is worse than no ICD: the loader may
++        // initialise far enough to produce an opaque black screen. Unknown devices keep the old
++        // first-manifest fallback for diagnostics.
++        if (DeviceSupport.family() == DeviceSupport.GpuFamily.MALI ||
++                DeviceSupport.family() == DeviceSupport.GpuFamily.ADRENO) return null;
++        return manifests[0];
+     }
+ 
+     /**
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt	2026-09-30 02:11:31.740965921 +0000
+@@ -27,6 +27,7 @@
+ import com.droiddeck.launcher.audio.PulseAudioComponent
+ import com.droiddeck.launcher.core.CpuCores
+ import com.droiddeck.launcher.core.DeviceReport
++import com.droiddeck.launcher.core.DeviceSupport
+ import com.droiddeck.launcher.core.HostEnvironment
+ import com.droiddeck.launcher.core.SessionLogCapture
+ import com.droiddeck.launcher.core.NetworkReport
+@@ -237,6 +238,15 @@
+     }
+ 
+     private fun tuDebug(linuxDriverId: String): String? {
++        // TU_DEBUG belongs to Turnip. Do not leak Turnip-only switches into PanVK/Mali sessions.
++        val isTurnip = if (linuxDriverId.isEmpty()) {
++            DeviceSupport.adreno()
++        } else {
++            val manager = LinuxVulkanDriverManager(this)
++            val signature = (manager.getDriverName(linuxDriverId) + " " + manager.getLibraryName(linuxDriverId)).lowercase()
++            signature.contains("turnip") || signature.contains("freedreno")
++        }
++        if (!isTurnip) return null
+         val override = File(Environment.getExternalStorageDirectory(), TU_DEBUG_SWITCH)
+             .takeIf { it.isFile }?.let { FileUtils.readString(it)?.trim() }
+         if (!override.isNullOrEmpty()) return override
+@@ -493,8 +503,19 @@
+         guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
+         guest.add("GALLIUM_DRIVER=zink")
+         guest.add("LIBGL_KOPPER_DRI2=true")
+-        LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
+-        // An imported glibc Turnip for this mode, when the user chose one: the session script checks
++        guest.add("BL_GPU_FAMILY=" + DeviceSupport.family().name.lowercase())
++        guest.add("BL_HOST_VULKAN=" + DeviceSupport.hostVulkanBackend().name.lowercase())
++        val runtimeIcd = LinuxRuntime.vulkanIcd(this)
++        if (runtimeIcd != null) {
++            guest.add("VK_ICD_FILENAMES=" + runtimeIcd.path)
++        } else if (DeviceSupport.mali()) {
++            // Do not let the Vulkan loader auto-scan the upstream runtime's Freedreno manifest on
++            // Mali. An imported PanVK/Mali ICD below can replace this sentinel in the session script.
++            val noDriver = "/nonexistent/droiddeck-mali-no-matching-icd.json"
++            guest.add("VK_DRIVER_FILES=$noDriver")
++            guest.add("VK_ICD_FILENAMES=$noDriver")
++        }
++        // An imported glibc Vulkan ICD for this mode, when the user chose one: the session script checks
+         // the manifest and its library from inside and points the loader at it with VK_DRIVER_FILES,
+         // so the runtime's own driver above stays untouched and is what a bad import falls back to.
+         // A program from the rail is one of the desktop's emulators, so it draws with the desktop's
+@@ -505,7 +526,7 @@
+         val linuxDriverId = SessionPrefs.linuxDriver(this, driverMode)
+         LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
+             ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
+-        // Turnip's own debug switches, for the runtime's driver and everything on it. The file in
++        // Turnip-only debug switches. PanVK/Mali sessions deliberately receive none of these. The file in
+         // Downloads holds the value verbatim ("sysmem", "sysmem,deck_emu"); with nothing there, an
+         // imported driver from the A710/A720/A722 legs gets "sysmem" on its own, which is what both
+         // its authors advise for those GPUs and what nothing else in the list needs.
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/ui/FrontEndSetup.kt /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/ui/FrontEndSetup.kt
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/ui/FrontEndSetup.kt	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/ui/FrontEndSetup.kt	2026-09-30 02:08:45.931372714 +0000
+@@ -151,7 +151,7 @@
+     }
+     val colors = MaterialTheme.colorScheme
+     val pal = LocalPalette.current
+-    val gpuOk = remember { DeviceSupport.adreno() }
++    val gpuOk = remember { DeviceSupport.supportedForThisBuild() }
+     val gpuName = remember { DeviceSupport.gpuName() }
+     val limitBlocks = PhantomProcessLimit.blocksSteam(s.phantomProcessStatus)
+     val signedIn = s.offlineAccount != null
+@@ -192,8 +192,12 @@
+                         Column(modifier = Modifier.fillMaxWidth().clip(Shape14).background(colors.surface).border(1.dp, pal.line, Shape14)) {
+                             CheckRow(
+                                 if (gpuOk) CheckState.OK else CheckState.WARN,
+-                                if (gpuOk) "Device supported" else "GPU not supported",
+-                                if (gpuOk) gpuName else "Steam draws with an Adreno driver; $gpuName may show a black screen",
++                                if (gpuOk) when (DeviceSupport.family()) {
++                                    DeviceSupport.GpuFamily.MALI -> "Mali backend enabled"
++                                    DeviceSupport.GpuFamily.ADRENO -> "Adreno compatibility enabled"
++                                    else -> "Device supported"
++                                } else "GPU backend not ready",
++                                "$gpuName · ${DeviceSupport.supportSummary()}",
+                             )
+                             CheckRow(
+                                 when { s.busy -> CheckState.BUSY; !s.ready -> CheckState.WARN; else -> CheckState.OK },
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/wayland/WaylandCompositor.java /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/wayland/WaylandCompositor.java
+--- /mnt/data/DroidDeck-original/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/wayland/WaylandCompositor.java	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/wayland/WaylandCompositor.java	2026-09-30 02:14:05.382199196 +0000
+@@ -185,8 +185,8 @@
+ 
+     /** Start the compositor rendering to {@code surface}. XDG_RUNTIME_DIR = an
+      *  app-writable dir for the wayland socket (e.g. context.getFilesDir()).
+-     *  driverPath/libraryName/nativeLibDir select the Turnip driver via adrenotools
+-     *  (all null -> system libvulkan, which can't do dmabuf import). */+     *  driverPath/libraryName/nativeLibDir optionally select an AdrenoTools/Turnip driver.
++     *  All null selects Android system Vulkan (the Mali-first path); capabilities are probed. */
+     public static native void nativeStartWithSurface(Surface surface, String xdgRuntimeDir,
+                                                      String driverPath, String libraryName,
+                                                      String nativeLibDir);
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/docs/MALI_PORT.md /mnt/data/DroidDeck-mali/DroidDeck-main/docs/MALI_PORT.md
+--- /mnt/data/DroidDeck-original/DroidDeck-main/docs/MALI_PORT.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/docs/MALI_PORT.md	2026-09-30 02:20:07.459932544 +0000
+@@ -0,0 +1,87 @@
++# DroidDeck Mali-first port
++
++This fork is intentionally **Mali-first**. Adreno/Turnip remains as the upstream compatibility
++path, but new GPU abstraction work should be designed around making ARM Mali usable rather than
++adding more KGSL assumptions.
++
++## Stage 1 — backend separation (implemented)
++
++The Android host and the Linux guest are now treated as separate GPU problems.
++
++### Android host compositor
++
++- `DeviceSupport` detects `MALI`, `ADRENO`, `XCLIPSE`, `POWERVR`, or `UNKNOWN`.
++- Adreno continues to load the selected Turnip driver through AdrenoTools.
++- Mali selects Android's **system Vulkan** loader instead of trying an A7xx/A8xx Turnip build.
++- The Wayland compositor asks the Vulkan loader for its supported API version instead of requiring
++  Vulkan 1.3 unconditionally.
++- dma-buf/external-memory/modifier extensions are probed before device creation. They are optional
++  for host startup; missing extensions disable the Vulkan dma-buf import path instead of making
++  `vkCreateDevice` fail.
++- An AHardwareBuffer received through `banner_ahb_v1` counts as valid surface content even when the
++  host Vulkan driver cannot import the companion dma-buf. This keeps the existing SurfaceControl
++  direct-layer path usable on Mali.
++
++### Linux guest
++
++- The runtime no longer silently chooses a Freedreno ICD on Mali.
++- The imported-driver manager accepts generic AArch64 **glibc** Vulkan ICD packages named
++  `libvulkan_*.so`, not only `libvulkan_freedreno*.so`.
++- PanVK/Panfrost/Mali names are preferred for Mali-oriented packages; Turnip/Freedreno remains
++  supported for Adreno.
++- Helper `.so` libraries in an imported ICD package are retained and its directory is exposed in
++  `LD_LIBRARY_PATH` for that session.
++- Android/bionic Vulkan HALs are rejected by the Linux ICD importer; the glibc guest cannot load
++  them directly.
++- `TU_DEBUG` is only applied to the Turnip/Freedreno path.
++- Session diagnostics expose `BL_GPU_FAMILY` and `BL_HOST_VULKAN` and refuse to auto-scan a
++  mismatched Freedreno manifest on Mali.
++
++## The remaining hard problem
++
++There are two materially different Mali kernel situations and they need different guest backends.
++
++### 1. Panfrost/Panthor DRM available
++
++Mesa PanVK can be a real guest Vulkan backend when the device exposes an accessible Linux DRM
++render node backed by Panfrost or Panthor. In this case the next work is to build/package a glibc
++AArch64 PanVK ICD for the DroidDeck rootfs and adapt the Wayland/AHardwareBuffer WSI path.
++
++### 2. Stock Android proprietary Mali (`/dev/mali0` / kbase)
++
++A stock Android Mali Vulkan HAL is normally a **bionic** userspace driver speaking ARM's proprietary
++kernel interface. A normal glibc PanVK build does not magically become compatible with that ABI.
++Copying `vulkan.mali.so` into the rootfs is therefore not a solution.
++
++The Mali-first target for those phones is a bridge rather than pretending `/dev/mali0` is a DRM
++node. The bridge needs to let the glibc guest submit Vulkan work through a host-side Android Vulkan
++implementation and preserve zero-copy presentation through the already existing AHardwareBuffer /
++`banner_ahb_v1` / SurfaceControl path.
++
++Candidate implementation directions to evaluate in Stage 2 are:
++
++1. a Vulkan command/handle bridge between a guest ICD and an Android host service;
++2. a Venus/virtio-style userspace transport if it can be integrated without requiring a privileged
++   kernel virtio-gpu device;
++3. a narrowly scoped bionic-driver compatibility bridge only if it can safely translate the libc,
++   loader, synchronization, gralloc/AHardwareBuffer, and fd semantics needed by the vendor HAL.
++
++The preferred solution is the one that works on **unrooted stock Mali phones** and does not depend
++on vendor-specific private ioctls from one SoC generation.
++
++## Do not regress these invariants
++
++- Never select Turnip merely because Android is new enough.
++- Never fabricate a KGSL render node on Mali.
++- Never let a known Mali device auto-load a Freedreno ICD.
++- Do not require host Vulkan dma-buf modifier import for the compositor to start.
++- Keep AHardwareBuffer direct-layer presentation functional even when Vulkan dma-buf import is
++  unavailable.
++- Treat a Linux guest ICD and an Android Vulkan HAL as different binary/runtime environments.
++
++## Validation status
++
++The source has been statically reviewed and the modified shell session script passes `bash -n`.
++A full Android/NDK Gradle build was attempted, but this working environment does not contain the
++Gradle 8.10.2 distribution and cannot download it. The current build-validation gap is therefore
++an environment limitation, not a reported compiler result.
+diff -ruN /mnt/data/DroidDeck-original/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session /mnt/data/DroidDeck-mali/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session
+--- /mnt/data/DroidDeck-original/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session	2026-09-29 19:38:52.000000000 +0000
++++ /mnt/data/DroidDeck-mali/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session	2026-09-30 02:19:34.751941110 +0000
+@@ -49,7 +49,7 @@
+ # The driver everything in this session draws with: gamescope's compositing, the client's UI
+ # (OpenGL through Zink), every game Proton launches, and in desktop mode every program on it.
+ # BL_VK_DRIVER names an imported driver's ICD manifest on the Android side, which is bound into the
+-# session at its own path; unset means the runtime keeps the Turnip it was built with.
++# session at its own path; unset means the runtime keeps the matching Vulkan ICD it was built with.
+ # VK_DRIVER_FILES REPLACES the loader's search, so a manifest whose library is unreadable would
+ # leave the session with no Vulkan at all - check both before setting it, and say so in the log
+ # rather than fail silently half a minute later.
+@@ -67,11 +67,19 @@
+     export VK_DRIVER_FILES="$BL_VK_DRIVER"
+     # Loaders older than 1.3.207 only know the old name; both are harmless together.
+     export VK_ICD_FILENAMES="$BL_VK_DRIVER"
++    # Generic Mesa/Mali ICD packages may carry helper .so files beside the selected ICD. Let the
++    # glibc loader resolve those helpers from the imported package without copying them into /usr.
++    bl_icd_dir=$(dirname "$bl_icd_lib")
++    export LD_LIBRARY_PATH="$bl_icd_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+     echo "== vulkan driver: imported $bl_icd_lib (via $BL_VK_DRIVER)"
+   else
+     echo "== vulkan driver: IGNORING $BL_VK_DRIVER (manifest or ${bl_icd_lib:-library} unreadable); using the runtime's own"
+   fi
+-  unset bl_icd_lib
++  unset bl_icd_lib bl_icd_dir
++fi
++if [ "${BL_GPU_FAMILY:-}" = "mali" ] && [ "${VK_ICD_FILENAMES:-}" = "/nonexistent/droiddeck-mali-no-matching-icd.json" ]; then
++  echo "== vulkan driver: Mali host detected but no matching guest ICD is installed"
++  echo "== vulkan driver: stock /dev/mali0 devices need the Mali bridge; PanVK requires a Panfrost/Panthor DRM node"
+ fi
+ # The app's gamescope build (tools/gamescope) takes realtime-priority Vulkan queues on this
+ # switch instead of on CAP_SYS_NICE, which proot never has; it falls back to normal priority
