@@ -42,10 +42,10 @@ jobs:
           ./tools/gradle/bootstrap-wrapper.sh
           ./gradlew --version
 
-      - name: Compilar APK debug Mali
+      - name: Probar y compilar APK debug Mali
         env:
           DROIDDECK_BUILD_LABEL: github-actions-mali
-        run: ./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
 
       - name: Subir APK
         uses: actions/upload-artifact@v4
