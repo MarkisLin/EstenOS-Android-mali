@@ -505,7 +505,15 @@ class SessionService : Service() {
             if (kbase.productCode != 0L) guest.add("BL_MALI_PRODUCT_ID=${kbase.productCodeHex}")
             if (kbase.gpuId != 0L) guest.add("BL_MALI_GPU_ID=${kbase.gpuIdHex}")
             if (kbase.shaderCores > 0) guest.add("BL_MALI_SHADER_CORES=${kbase.shaderCores}")
-            MaliKbaseProfiles.forDevice(kbase)?.let { guest.add("BL_MALI_PROFILE=${it.id}") }
+            MaliKbaseProfiles.forDevice(kbase)?.let { profile ->
+                guest.add("BL_MALI_PROFILE=${profile.id}")
+                if (MaliKbaseProfiles.isPinnedG57(profile)) {
+                    // The pinned G57/JM glibc build documents these as its safe/default path.
+                    // Keep them scoped to Valhall v9 JM; never leak them into CSF drivers.
+                    guest.add("PANVK_NO_AFBC=1")
+                    guest.add("PANVK_ASYNC=1")
+                }
+            }
         }
         val runtimeIcd = LinuxRuntime.vulkanIcd(this)
         if (runtimeIcd != null) {
