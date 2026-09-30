@@ -163,6 +163,15 @@ public class LinuxVulkanDriverManager {
         return m != null ? m.optString("driverVersion", "") : "";
     }
 
+    /** True only for drivers installed from immutable release sources managed by Automatic. */
+    public boolean isAutoManagedTrustedMaliDriver(String id) {
+        JSONObject m = readMeta(id);
+        if (m == null) return false;
+        String source = m.optString("source", "");
+        return MaliKbaseProfiles.RELEASE_SOURCE_LABEL.equals(source)
+                || MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL.equals(source);
+    }
+
     /** The glibc the driver asks for, as its zip recorded it ("" when the zip did not say). */
     public String getMinGlibc(String id) {
         JSONObject m = readMeta(id);
