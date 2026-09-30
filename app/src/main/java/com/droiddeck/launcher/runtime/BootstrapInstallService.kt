@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.PowerManager
 import com.droiddeck.launcher.MainActivity
@@ -23,6 +24,7 @@ import com.droiddeck.launcher.R
  */
 class BootstrapInstallService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -37,11 +39,26 @@ class BootstrapInstallService : Service() {
             setReferenceCounted(false)
             acquire()
         }
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wifi?.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "DroidDeck:bootstrap-wifi",
+            )?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Throwable) {
+            wifiLock = null
+        }
     }
 
     override fun onDestroy() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        try { wifiLock?.let { if (it.isHeld) it.release() } } catch (_: Throwable) {}
+        wifiLock = null
         super.onDestroy()
     }
 
