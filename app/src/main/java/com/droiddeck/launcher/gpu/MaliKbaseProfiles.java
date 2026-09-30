@@ -101,13 +101,15 @@ public final class MaliKbaseProfiles {
             Maturity.PUBLIC_EXPERIMENTAL, false
     );
 
+    private static final long[] G57_PRODUCT_IDS = new long[]{0x9091L, 0x9093L};
+
     // Valhall v9 / JM. Public hardware logs identify Mali-G57 as GPU ID 0x90930010,
     // canonical product 0x9093. The pinned glibc package is explicitly built for PRoot/containers.
     // We intentionally match UAPI major 11 but do not freeze the minor: public G57/JM devices span
     // at least 11.38 and 11.46, and the real Vulkan/Zink/gamescope preflight remains authoritative.
     private static final Profile G57_V9_JM = new Profile(
             "g57-v9-jm", "Mali-G57", 9, "jm",
-            11, -1, -1, new long[]{0x9091L, 0x9093L},
+            11, -1, -1, G57_PRODUCT_IDS,
             "Mali-G57 JM / Unisoc T820 (0x9091) + public G57 validation (0x9093)",
             Maturity.PUBLIC_EXPERIMENTAL, true
     );
@@ -179,8 +181,9 @@ public final class MaliKbaseProfiles {
         out.put("maliKbaseFrontend", "jm");
         out.put("maliKbaseUapiMajor", 11);
         JSONArray products = new JSONArray();
-        products.put("0x9091");
-        products.put("0x9093");
+        for (long product : G57_PRODUCT_IDS) {
+            products.put(String.format(java.util.Locale.US, "0x%04x", product));
+        }
         out.put("maliProductIds", products);
         out.put("testedDevice", G57_V9_JM.testedDevice);
         out.put("driverVersion", "1.0.0-glibc-async");
