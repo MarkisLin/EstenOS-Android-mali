@@ -1,0 +1,817 @@
+diff --git a/.github/workflows/build-mali.yml b/.github/workflows/build-mali.yml
+index 4850c66..feea753 100644
+--- a/.github/workflows/build-mali.yml
++++ b/.github/workflows/build-mali.yml
+@@ -34,10 +34,11 @@ jobs:
+             'ndk;27.3.13750724' \
+             'cmake;3.22.1'
+ 
+-      - name: Verificar Gradle Wrapper
++      - name: Restaurar y verificar Gradle Wrapper
+         shell: bash
+         run: |
+-          chmod +x ./gradlew
++          chmod +x ./gradlew ./tools/gradle/bootstrap-wrapper.sh
++          ./tools/gradle/bootstrap-wrapper.sh
+           ./gradlew --version
+ 
+       - name: Compilar APK debug Mali
+diff --git a/README.md b/README.md
+index 428f486..39c3413 100644
+--- a/README.md
++++ b/README.md
+@@ -68,9 +68,10 @@ controladores Vulkan— se administran desde **Ajustes**. En hardware Mali/Kbase
+ primer inicio intenta preparar automáticamente el runtime, el PanVK-Kbase exacto y Proton antes de
+ abrir Steam; no hace falta entrar al gestor de controladores.
+ 
+-El perfil **Automático** prioriza móviles: 540p/30 FPS cuando Android marca poca RAM (o hay presión
+-térmica severa al iniciar) y 720p/60 FPS en la ruta normal. Calidad queda como elección manual. Los
+-ajustes técnicos permanecen disponibles, pero ocultos por defecto detrás de opciones avanzadas.
++El perfil **Automático** mantiene 720p como base: 720p/30 FPS en el nivel mínimo de 4 GB o con
++presión térmica severa, 720p/45 en la ruta equilibrada y 720p/60 cuando hay margen suficiente.
++Calidad (hasta 900p) queda como elección manual. Los ajustes técnicos permanecen disponibles, pero
++ocultos por defecto detrás de opciones avanzadas.
+ 
+ ## Construcción
+ 
+diff --git a/app/src/main/java/com/droiddeck/launcher/MainActivity.kt b/app/src/main/java/com/droiddeck/launcher/MainActivity.kt
+index fe0f2d9..8f490b2 100644
+--- a/app/src/main/java/com/droiddeck/launcher/MainActivity.kt
++++ b/app/src/main/java/com/droiddeck/launcher/MainActivity.kt
+@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
+     private var phantomWarning by mutableStateOf<String?>(null)
+     private var phantomProcessStatus by mutableStateOf(PhantomProcessStatus.NOT_APPLICABLE)
+     private var showPhantomGate by mutableStateOf(false)
++    private var minimumRamWarning by mutableStateOf<String?>(null)
+     private var directAudio by mutableStateOf(false)
+     private var clientDirectAudio by mutableStateOf(false)
+     private var forceFullscreen by mutableStateOf(true)
+@@ -410,6 +411,15 @@ class MainActivity : ComponentActivity() {
+                     page = page,
+                 )
+                 }
++                minimumRamWarning?.let { warning ->
++                    ConfirmDialog(
++                        title = "Se requieren 4 GB de RAM",
++                        text = warning + " La base de calidad sigue siendo 720p; DroidDeck no reduce la experiencia a 540p para intentar soportar menos memoria.",
++                        confirm = "Cerrar",
++                        onConfirm = { minimumRamWarning = null },
++                        onDismiss = { minimumRamWarning = null },
++                    )
++                }
+                 showNonAdreno?.let { release ->
+                     ConfirmDialog(
+                         title = "Backend de GPU no preparado",
+@@ -934,6 +944,10 @@ class MainActivity : ComponentActivity() {
+ 
+     /** Starts a session; unknown/non-target GPU families get the same warning before any download. */
+     private fun startSession(intent: Intent, steamSession: Boolean = false) {
++        com.droiddeck.launcher.core.MobilePerformance.minimumRamIssue(this)?.let { issue ->
++            minimumRamWarning = issue
++            return
++        }
+         refreshPhantomStatus()
+         if (steamSession && PhantomProcessLimit.blocksSteam(phantomProcessStatus)) {
+             showPhantomGate = true
+diff --git a/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt b/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt
+index d2e183b..deaff78 100644
+--- a/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt
++++ b/app/src/main/java/com/droiddeck/launcher/SessionActivity.kt
+@@ -350,7 +350,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
+                     frameGenEngine = frameGenEngine, frameGenMultiplier = frameGenMultiplier,
+                     lsfgReady = LsfgNative.isInstalled(this@SessionActivity),
+                     oscMode = oscMode, suspendPolicy = suspendPolicy, touchMode = touchMode,
+-                    touchAuto = if (usingTouchpad()) "touchpad" else "direct",
++                    touchAuto = if (usingTouchpad()) "panel táctil" else "directo",
+                     shapeMode = shapeMode, fexPreset = fexPreset,
+                     secondScreenMode = secondScreenMode,
+                     secondScreenDisplays = secondScreenDisplays,
+@@ -824,9 +824,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
+             SessionPrefs.SHAPE_EXACT -> panelW / panelH
+             else -> maxOf(panelW / panelH, 16f / 9f)
+         }
+-        // Mobile-first by default: the automatic profile caps a constrained phone at 540p/30 and
+-        // the normal path at 720p/60. Extra pixels are opt-in because Steam's CEF, gamescope and
+-        // the game all share the same mobile GPU/RAM budget.
++        // Mobile-first by default: even the minimum 4 GB tier keeps a 720p ceiling and lowers FPS
++        // plus process overhead before resolution. Normal automatic targets 720p/45; roomy/cool
++        // phones can start at 720p/60. Extra pixels remain opt-in because Steam's CEF, gamescope
++        // and the game all share the same mobile GPU/RAM budget.
+         val mode = SessionPrefs.prefMode(intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM)
+         // A custom resolution is taken as given; the compositor fits it to the panel.
+         SessionPrefs.customResolution(this, mode)?.let { return it }
+@@ -894,11 +895,28 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
+             return
+         }
+         // What the log says about why, read off the main thread (notifyEnded arrives on it).
++        // A trusted, automatically downloaded Mali ICD gets one clean reinstall when preflight
++        // proves that exact package is broken/mismatched. Manual driver choices are never touched,
++        // and the retry flag prevents an endless reinstall loop if the current release itself is bad.
+         Thread({
+-            val hint = sessionEndHint(SessionState.logFile)
+-            runOnUiThread {
+-                if (isFinishing || isDestroyed) return@runOnUiThread
+-                showEnded(status, hint)
++            val canRepair = !intent.getBooleanExtra(EXTRA_MALI_REPAIR_ATTEMPTED, false) &&
++                com.droiddeck.launcher.gpu.MaliDriverBootstrap.invalidateAutoManagedAfterPreflightFailure(this, status)
++            if (canRepair) {
++                SessionEvents.record("mali-driver.auto_repair", mapOf("exitCode" to status))
++                val again = Intent(intent).putExtra(EXTRA_MALI_REPAIR_ATTEMPTED, true)
++                runOnUiThread {
++                    if (isFinishing || isDestroyed) return@runOnUiThread
++                    loading.step = "Reinstalando automáticamente el controlador Mali…"
++                    loading.percent = -1
++                    finish()
++                    startActivity(again)
++                }
++            } else {
++                val hint = sessionEndHint(SessionState.logFile)
++                runOnUiThread {
++                    if (isFinishing || isDestroyed) return@runOnUiThread
++                    showEnded(status, hint)
++                }
+             }
+         }, "session-end-hint").start()
+     }
+@@ -1586,6 +1604,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
+ 
+     companion object {
+         private const val TAG = "SessionActivity"
++        private const val EXTRA_MALI_REPAIR_ATTEMPTED = "com.droiddeck.launcher.extra.MALI_REPAIR_ATTEMPTED"
+         private const val UNBUFFERED_SOURCES = InputDevice.SOURCE_CLASS_JOYSTICK or InputDevice.SOURCE_CLASS_TRACKBALL or InputDevice.SOURCE_CLASS_POSITION
+         private const val CURSOR_PAD_HOLD_MS = 1200L
+         private const val DRAWER_HAT_THRESHOLD = 0.5f
+diff --git a/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt b/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt
+index abefc25..6d57eb8 100644
+--- a/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt
++++ b/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt
+@@ -49,7 +49,7 @@ object DeviceReport {
+         b.append("=============================\n")
+         k("Generado", SimpleDateFormat("yyyy-MM-dd HH:mm:ss zzz", Locale.US).format(Date()))
+         k("Modo de sesión", when (mode) {
+-            SessionService.MODE_DESKTOP -> "escritorio heredado (labwc/LXQt)"
++            SessionService.MODE_DESKTOP -> "compatibilidad heredada redirigida a Steam"
+             SessionService.MODE_RUN -> "programa bajo gamescope"
+             else -> "Steam (gamescope)"
+         })
+@@ -124,6 +124,12 @@ object DeviceReport {
+             "/vendor/lib64/hw/vulkan.adreno.so", "/vendor/lib/hw/vulkan.adreno.so",
+         ).firstOrNull { File(it).exists() } ?: "no encontrado en rutas conocidas")
+ 
++        h("Memoria")
++        val totalRam = MobilePerformance.totalRamBytes(context)
++        k("RAM visible para Android", if (totalRam > 0) String.format(Locale.US, "%.2f GB", totalRam / 1_000_000_000.0) else "desconocida")
++        k("Requisito DroidDeck", "mínimo 4 GB nominales")
++        k("Compatibilidad de RAM", MobilePerformance.minimumRamIssue(totalRam) ?: "compatible")
++
+         h("Pantalla")
+         k("Salida de sesión", SessionState.outputSize?.let { "${it.first}x${it.second}" })
+         k("Frecuencia", String.format(Locale.US, "%.2f Hz", SessionState.refreshHz))
+diff --git a/app/src/main/java/com/droiddeck/launcher/core/MobilePerformance.kt b/app/src/main/java/com/droiddeck/launcher/core/MobilePerformance.kt
+index b77913d..7b3fa3f 100644
+--- a/app/src/main/java/com/droiddeck/launcher/core/MobilePerformance.kt
++++ b/app/src/main/java/com/droiddeck/launcher/core/MobilePerformance.kt
+@@ -6,20 +6,26 @@ import android.os.Build
+ import android.os.PowerManager
+ 
+ /**
+- * Conservative mobile-first defaults for a Steam session.
++ * Mobile-first policy for Steam on phones.
+  *
+- * The important rule is that "Automático" must never assume a phone is fast just because it can
+- * expose Vulkan.  GPU memory is shared system RAM on the Mali devices this fork targets, and Steam
+- * itself (CEF + FEX + gamescope) has a meaningful fixed cost before a game starts.  The automatic
+- * plan therefore uses only stable Android signals we can query without benchmarks or root and
+- * deliberately tops out at the balanced plan.  Users can opt into quality manually.
++ * DroidDeck Mali-first deliberately targets devices sold with at least 4 GB of RAM.  The normal
++ * automatic path protects frame time and memory before sacrificing image quality: 720p is kept as
++ * the baseline even on the 4 GB tier, while the FPS target and allocator/process overhead are
++ * reduced first.  Higher tiers can move to 45/60 FPS and users may opt into 900p manually.
++ *
++ * Android's MemoryInfo.totalMem is the kernel-visible amount, not the number printed on the box;
++ * several nominal 4 GB phones expose roughly 3.4-3.8 GB after reserved regions.  The support gate
++ * therefore uses a conservative kernel-visible floor that still cleanly excludes 2/3 GB devices.
+  */
+ object MobilePerformance {
+     const val AUTO = "auto"
+     const val SAVER = "saver"
+     const val BALANCED = "balanced"
++    const val PERFORMANCE = "performance"
+     const val QUALITY = "quality"
+ 
++    const val MINIMUM_NOMINAL_RAM_GB = 4
++
+     data class Plan(
+         val id: String,
+         val label: String,
+@@ -27,16 +33,25 @@ object MobilePerformance {
+         val maxHeight: Int,
+         /** gamescope refresh/FPS cap. 0 means use the panel/session refresh. */
+         val targetFps: Int,
+-        /** Reduce glibc allocator arena proliferation on memory-constrained devices. */
++        /** Reduce glibc/process overhead for the smallest supported devices. */
+         val lowMemory: Boolean,
+         val reason: String,
+     )
+ 
+-    private const val GIB = 1024L * 1024L * 1024L
++    // Nominal 4 GB phones commonly expose less than 4 GiB through /proc/meminfo because firmware,
++    // modem/GPU and contiguous heaps reserve part of physical RAM. 3.4 GB remains well above the
++    // normal kernel-visible amount of a 3 GB device, so it is a practical support floor.
++    private const val MIN_SUPPORTED_VISIBLE_BYTES = 3_400_000_000L
++
++    // Rough visible-RAM boundaries used only to choose conservative launch defaults. They do not
++    // claim that RAM measures GPU speed; that is why Automatic never selects the 900p profile.
++    private const val FOUR_GB_TIER_MAX = 5_000_000_000L
++    private const val EIGHT_GB_TIER_MIN = 6_800_000_000L
+ 
+     fun plan(context: Context, selected: String = AUTO): Plan = when (selected) {
+         SAVER -> saver("seleccionado manualmente")
+         BALANCED -> balanced("seleccionado manualmente")
++        PERFORMANCE -> performance("seleccionado manualmente")
+         QUALITY -> quality("seleccionado manualmente")
+         else -> automatic(context)
+     }
+@@ -46,12 +61,10 @@ object MobilePerformance {
+         val info = ActivityManager.MemoryInfo()
+         am.getMemoryInfo(info)
+         val total = info.totalMem
+-
+-        // ActivityManager.isLowRamDevice is the platform's own coarse signal.  The explicit RAM
+-        // threshold also catches cheap devices whose OEM did not mark them low-RAM.  4.5 GiB gives
+-        // 4 GiB phones enough headroom for Android + shared GPU memory + Steam/Proton.
+         val thermal = if (Build.VERSION.SDK_INT >= 29) {
+-            runCatching { (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus }.getOrDefault(PowerManager.THERMAL_STATUS_NONE)
++            runCatching {
++                (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus
++            }.getOrDefault(PowerManager.THERMAL_STATUS_NONE)
+         } else PowerManager.THERMAL_STATUS_NONE
+ 
+         return automaticForSignals(total, am.isLowRamDevice, thermal)
+@@ -59,25 +72,49 @@ object MobilePerformance {
+ 
+     /** Pure policy entry point kept testable without Android services. */
+     fun automaticForSignals(totalRam: Long, lowRamDevice: Boolean, thermalStatus: Int): Plan {
++        // Severe heat wins over every memory tier. We keep 720p and reduce temporal load first.
+         if (thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
+             return saver("el teléfono ya está caliente al iniciar la sesión")
+         }
+-        if (lowRamDevice || totalRam in 1 until (GIB * 9 / 2)) {
+-            return saver(if (lowRamDevice) "Android marca el dispositivo como memoria limitada" else "RAM total <= 4,5 GB")
++
++        // 4 GB is supported, not treated as an unsupported ultra-low-end target. The smallest
++        // supported tier stays at 720p/30 and trims allocator/mangoapp overhead instead of 540p.
++        if (lowRamDevice || (totalRam in 1 until FOUR_GB_TIER_MAX)) {
++            return saver(
++                if (lowRamDevice) "Android marca el dispositivo como memoria limitada"
++                else "perfil de 4 GB: se conserva 720p y se limita a 30 FPS",
++            )
++        }
++
++        // Moderate thermal pressure is a good reason not to ask for 60 FPS even on a large-memory
++        // phone. 45 FPS preserves noticeably more motion than 30 while cutting GPU/CPU work.
++        if (thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
++            return balanced("temperatura elevada: 720p con objetivo de 45 FPS")
+         }
+ 
+-        // Do not auto-select Quality.  A phone having plenty of RAM says little about sustained GPU
+-        // throughput or thermals; 720p/60 is a safer default and users who know the device can opt
+-        // into a higher target.
+-        return balanced(if (totalRam > 0) "RAM suficiente; perfil móvil conservador" else "perfil móvil conservador")
++        // Only the roomy tier automatically asks for 60 FPS. RAM is merely a headroom signal here;
++        // the 900p Quality mode remains manual because sustained GPU throughput cannot be inferred
++        // reliably from Android model names or RAM capacity.
++        if (totalRam >= EIGHT_GB_TIER_MIN) {
++            return performance("margen de memoria suficiente para priorizar 720p / 60 FPS")
++        }
++
++        return balanced(
++            if (totalRam > 0) "perfil móvil equilibrado: 720p / 45 FPS"
++            else "perfil móvil conservador: 720p / 45 FPS",
++        )
+     }
+ 
+     private fun saver(reason: String) = Plan(
+-        SAVER, "Ahorro", maxHeight = 540, targetFps = 30, lowMemory = true, reason = reason,
++        SAVER, "Ahorro", maxHeight = 720, targetFps = 30, lowMemory = true, reason = reason,
+     )
+ 
+     private fun balanced(reason: String) = Plan(
+-        BALANCED, "Equilibrado", maxHeight = 720, targetFps = 60, lowMemory = false, reason = reason,
++        BALANCED, "Equilibrado", maxHeight = 720, targetFps = 45, lowMemory = false, reason = reason,
++    )
++
++    private fun performance(reason: String) = Plan(
++        PERFORMANCE, "Fluido", maxHeight = 720, targetFps = 60, lowMemory = false, reason = reason,
+     )
+ 
+     private fun quality(reason: String) = Plan(
+@@ -90,6 +127,18 @@ object MobilePerformance {
+         info.totalMem
+     }.getOrDefault(0L)
+ 
++    /** Null when the device satisfies the project's 4 GB minimum or Android could not report RAM. */
++    fun minimumRamIssue(context: Context): String? = minimumRamIssue(totalRamBytes(context))
++
++    fun minimumRamIssue(totalRam: Long): String? {
++        if (totalRam <= 0L || totalRam >= MIN_SUPPORTED_VISIBLE_BYTES) return null
++        val gb = totalRam / 1_000_000_000.0
++        return "DroidDeck Mali-first requiere un teléfono con al menos 4 GB de RAM. " +
++            "Android reporta %.1f GB utilizables en este dispositivo; los equipos de 2–3 GB no forman parte del objetivo de esta versión.".format(gb)
++    }
++
++    fun supportsMinimumRam(context: Context): Boolean = minimumRamIssue(context) == null
++
+     fun summary(context: Context, selected: String = AUTO): String {
+         val p = plan(context, selected)
+         val fps = if (p.targetFps > 0) "${p.targetFps} FPS" else "FPS del panel"
+diff --git a/app/src/main/java/com/droiddeck/launcher/gpu/MaliDriverBootstrap.kt b/app/src/main/java/com/droiddeck/launcher/gpu/MaliDriverBootstrap.kt
+index 8a6f8f7..41259c2 100644
+--- a/app/src/main/java/com/droiddeck/launcher/gpu/MaliDriverBootstrap.kt
++++ b/app/src/main/java/com/droiddeck/launcher/gpu/MaliDriverBootstrap.kt
+@@ -20,10 +20,36 @@ object MaliDriverBootstrap {
+         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) return false
+         val manager = LinuxVulkanDriverManager(context)
+         val chosen = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
+-        if (chosen.isNotEmpty() && manager.isInstalled(chosen) && manager.compatibilityIssue(chosen) == null) return false
++        if (chosen.isNotEmpty()) {
++            // A valid explicit choice is authoritative. A stale/missing/incompatible one must pass
++            // through ensure() so it can be cleared before an automatic driver is resolved.
++            return !manager.isInstalled(chosen) || manager.compatibilityIssue(chosen) != null
++        }
+         return LinuxVulkanDriver.automaticDriverId(context).isEmpty()
+     }
+ 
++    /**
++     * One-shot self repair for failures that directly implicate an automatically managed Mali ICD.
++     * Manual selections are never deleted. The caller should retry the session at most once after
++     * this returns true; if the fresh trusted package fails too, the real diagnostic must be shown.
++     */
++    fun invalidateAutoManagedAfterPreflightFailure(context: Context, exitCode: Int): Boolean {
++        if (exitCode !in setOf(78, 79, 82)) return false
++        if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) return false
++
++        // An explicit driver choice belongs to the user even if it originally came from Downloads.
++        if (SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM).isNotEmpty()) return false
++
++        val id = LinuxVulkanDriver.automaticDriverId(context)
++        if (id.isEmpty() || !TurnipReleases.isDownloaded(context, id)) return false
++
++        val manager = LinuxVulkanDriverManager(context)
++        manager.removeDriver(id)
++        TurnipReleases.forget(context, id)
++        android.util.Log.w("MaliDriverBootstrap", "removed auto-managed Mali ICD $id after preflight exit $exitCode; one clean reinstall is allowed")
++        return true
++    }
++
+     /**
+      * Returns the installed/usable driver id. Throws with a Spanish user-facing reason when this
+      * phone has no integrated profile or the trusted release could not be fetched/verified.
+@@ -31,6 +57,14 @@ object MaliDriverBootstrap {
+     @Throws(IOException::class, IllegalArgumentException::class)
+     fun ensure(context: Context, progress: (stage: String, percent: Int) -> Unit = { _, _ -> }): String {
+         val manager = LinuxVulkanDriverManager(context)
++
++        // Repair preference state before consulting Automatic. Otherwise a good automatic ICD can
++        // make needed() look satisfied while the session still resolves a stale explicit id.
++        val selected = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
++        if (selected.isNotEmpty()) {
++            if (manager.isInstalled(selected) && manager.compatibilityIssue(selected) == null) return selected
++            SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
++        }
+         LinuxVulkanDriver.automaticDriverId(context).takeIf { it.isNotEmpty() }?.let { return it }
+ 
+         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) {
+@@ -44,14 +78,6 @@ object MaliDriverBootstrap {
+             throw IOException("${profile.displayGpu} está reconocida, pero su controlador PanVK-Kbase glibc todavía es experimental y no se instala automáticamente.")
+         }
+ 
+-        // If a stale explicit selection points at a removed/incompatible ICD, automatic repair is
+-        // safer than carrying that dead choice into every launch. A valid manual choice was kept by
+-        // needed() and would have returned before reaching this point.
+-        val selected = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
+-        if (selected.isNotEmpty() && (!manager.isInstalled(selected) || manager.compatibilityIssue(selected) != null)) {
+-            SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
+-        }
+-
+         progress("Buscando el controlador Mali correcto…", -1)
+         val check = try {
+             TurnipReleases.refresh(context)
+diff --git a/app/src/main/java/com/droiddeck/launcher/session/SessionPrefs.kt b/app/src/main/java/com/droiddeck/launcher/session/SessionPrefs.kt
+index a16ac5e..f23de2e 100644
+--- a/app/src/main/java/com/droiddeck/launcher/session/SessionPrefs.kt
++++ b/app/src/main/java/com/droiddeck/launcher/session/SessionPrefs.kt
+@@ -286,8 +286,9 @@ object SessionPrefs {
+ 
+     /**
+      * The tallest the session's display may be, in pixels. -1 = the mobile performance profile,
+-     * 0 = the panel's own height, otherwise a fixed cap. Automatic is intentionally conservative:
+-     * 540p/30 on memory-limited phones and 720p/60 on the normal path. A cap the user chose wins.
++     * 0 = the panel's own height, otherwise a fixed cap. Automatic keeps 720p as the baseline:
++     * 30 FPS on the 4 GB tier, 45 FPS normally and 60 FPS when the mobile profile has headroom.
++     * A cap the user chose always wins.
+      */
+     fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", defaultResolutionCap(mode))
+ 
+@@ -364,17 +365,17 @@ object SessionPrefs {
+     const val RESOLUTION_AUTO = -1
+ 
+     /**
+-     * Performance preset for mobile hardware.  Automatic is the product default: it chooses a
+-     * conservative 540p/30 target on low-memory phones and 720p/60 elsewhere.  Manual resolution
+-     * and custom-size choices still win over this plan.
++     * Performance preset for mobile hardware. Automatic is the product default: the 4 GB tier
++     * keeps 720p at 30 FPS, the normal tier targets 720p/45, and roomy/cool phones may start at
++     * 720p/60. Manual resolution and custom-size choices still win over this plan.
+      */
+     fun performanceProfile(context: Context): String =
+         prefs(context).getString("performanceProfile", MobilePerformance.AUTO)
+-            ?.takeIf { it in setOf(MobilePerformance.AUTO, MobilePerformance.SAVER, MobilePerformance.BALANCED, MobilePerformance.QUALITY) }
++            ?.takeIf { it in setOf(MobilePerformance.AUTO, MobilePerformance.SAVER, MobilePerformance.BALANCED, MobilePerformance.PERFORMANCE, MobilePerformance.QUALITY) }
+             ?: MobilePerformance.AUTO
+ 
+     fun setPerformanceProfile(context: Context, id: String) {
+-        val value = id.takeIf { it in setOf(MobilePerformance.AUTO, MobilePerformance.SAVER, MobilePerformance.BALANCED, MobilePerformance.QUALITY) }
++        val value = id.takeIf { it in setOf(MobilePerformance.AUTO, MobilePerformance.SAVER, MobilePerformance.BALANCED, MobilePerformance.PERFORMANCE, MobilePerformance.QUALITY) }
+             ?: MobilePerformance.AUTO
+         prefs(context).edit().putString("performanceProfile", value).apply()
+     }
+diff --git a/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt b/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt
+index 3bf0e99..c3a06ee 100644
+--- a/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt
++++ b/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt
+@@ -537,9 +537,9 @@ class SessionService : Service() {
+         // BL_STEAMDECK; it is the one that builds the command line).
+         if (SessionPrefs.glThread(this)) guest.add("mesa_glthread=true")
+         if (SessionPrefs.noGlError(this)) guest.add("MESA_NO_ERROR=1")
+-        // On memory-constrained phones glibc can otherwise create one malloc arena per active
+-        // thread/CPU and retain a surprising amount of RSS across Steam's many helper processes.
+-        // Keep the change scoped to the Ahorro profile; faster devices retain glibc defaults.
++        // On the smallest supported 4 GB tier glibc can otherwise create one malloc arena per
++        // active thread/CPU and retain a surprising amount of RSS across Steam's helpers. Keep the
++        // change scoped to Ahorro: image quality remains 720p while memory/process overhead drops.
+         if (mobilePlan.lowMemory) {
+             guest.add("MALLOC_ARENA_MAX=2")
+             guest.add("BL_LOW_MEMORY=1")
+diff --git a/app/src/main/java/com/droiddeck/launcher/ui/ModeSettingsDialog.kt b/app/src/main/java/com/droiddeck/launcher/ui/ModeSettingsDialog.kt
+index 00ebbda..6a2a310 100644
+--- a/app/src/main/java/com/droiddeck/launcher/ui/ModeSettingsDialog.kt
++++ b/app/src/main/java/com/droiddeck/launcher/ui/ModeSettingsDialog.kt
+@@ -167,7 +167,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
+         "rt" -> {
+             DriverPage(
+                 title = "Controlador del entorno",
+-                hint = (if (steam) "Lo usan Steam y los juegos." else "Lo usan las aplicaciones del escritorio.") + " Se aplica en la próxima sesión.",
++                hint = "Lo usan Steam y los juegos. Se aplica en la próxima sesión.",
+                 rows = s.linuxRows, selected = s.linuxSelected, downloads = s.linuxDownloads,
+                 status = s.releaseStatus, checking = s.releaseChecking, importLabel = "Importar ZIP de controlador…", canRestore = false,
+                 onSelect = a.onSelectLinux, onDelete = a.onRemoveLinux, onRefresh = a.onRefreshReleases,
+@@ -191,7 +191,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
+     }
+     SettingsPage(
+         host,
+-        title = if (steam) "Sesión de Steam" else "Sesión de escritorio",
++        title = "Sesión de Steam",
+         onBack = a.onDismiss,
+         scroll = pageScroll,
+     ) {
+@@ -207,7 +207,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
+                     1080 to "Hasta 1080p", 0 to "La resolución del panel",
+                 ).map { (cap, label) -> cap to (if (cap == default) "$label - predeterminada" else label) } +
+                     (CUSTOM to (custom?.let { "Personalizada · ${it.first}×${it.second}" } ?: "Personalizada…")),
+-                if (custom != null) CUSTOM else s.resolutionCap, note = "Automática usa el perfil móvil; 540p reduce mucho la carga en teléfonos modestos.",
++                if (custom != null) CUSTOM else s.resolutionCap, note = "Automática mantiene 720p como base. 540p queda como opción manual para juegos especialmente pesados.",
+                 chipModifier = androidx.compose.ui.Modifier.focusRequester(firstChip),
+                 onPick = { v -> if (v == CUSTOM) editCustom = true else { a.onCustomResolution(null); a.onResolution(v) } },
+             )
+@@ -231,7 +231,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
+             )
+         }
+         SettingsGroup("Controladores") {
+-            SettingsRow("Controlador del entorno", (if (steam) "Lo usan Steam y los juegos." else "Lo usan las aplicaciones del escritorio.") + " Se aplica en la próxima sesión.") {
++            SettingsRow("Controlador del entorno", "Lo usan Steam y los juegos. Se aplica en la próxima sesión.") {
+                 ValueChip(
+                     s.linuxRows.firstOrNull { it.id == s.linuxSelected }?.name ?: "Predeterminado del entorno", open = false,
+                     modifier = androidx.compose.ui.Modifier.focusRequester(runtimeChip),
+@@ -254,11 +254,11 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
+                 }
+             }
+         }
+-        SettingsGroup(if (steam) "Táctil y controles" else "Táctil") {
++        SettingsGroup("Táctil y controles") {
+             ChoiceRow(
+                 host, "touch", "Táctil", null,
+                 listOf("auto" to "Automático", "touchpad" to "Panel táctil", "direct" to "Directo"), s.touchMode,
+-                note = "Automático usa panel táctil en escritorio y entrada directa en Steam. Panel táctil: arrastra para mover y toca para hacer clic.",
++                note = "Automático usa entrada directa en Steam. Panel táctil queda disponible manualmente: arrastra para mover y toca para hacer clic.",
+                 onPick = a.onTouch,
+             )
+             if (steam && s.oscMode != null) ChoiceRow(
+diff --git a/app/src/main/java/com/droiddeck/launcher/ui/PerformanceDialog.kt b/app/src/main/java/com/droiddeck/launcher/ui/PerformanceDialog.kt
+index 4854809..f92d8ea 100644
+--- a/app/src/main/java/com/droiddeck/launcher/ui/PerformanceDialog.kt
++++ b/app/src/main/java/com/droiddeck/launcher/ui/PerformanceDialog.kt
+@@ -73,8 +73,9 @@ fun PerformancePage(
+                 performanceSummary + ". Automático es la opción recomendada y prioriza estabilidad térmica y memoria.",
+                 listOf(
+                     MobilePerformance.AUTO to "Automático (recomendado)",
+-                    MobilePerformance.SAVER to "Ahorro · 540p / 30 FPS",
+-                    MobilePerformance.BALANCED to "Equilibrado · 720p / 60 FPS",
++                    MobilePerformance.SAVER to "Ahorro · 720p / 30 FPS",
++                    MobilePerformance.BALANCED to "Equilibrado · 720p / 45 FPS",
++                    MobilePerformance.PERFORMANCE to "Fluido · 720p / 60 FPS",
+                     MobilePerformance.QUALITY to "Calidad · hasta 900p",
+                 ),
+                 performanceProfile,
+diff --git a/app/src/main/java/com/droiddeck/launcher/ui/SessionOverlay.kt b/app/src/main/java/com/droiddeck/launcher/ui/SessionOverlay.kt
+index c1e409f..6576d84 100644
+--- a/app/src/main/java/com/droiddeck/launcher/ui/SessionOverlay.kt
++++ b/app/src/main/java/com/droiddeck/launcher/ui/SessionOverlay.kt
+@@ -132,7 +132,7 @@ private class DrawerFocus {
+ /** Everything the drawer shows and does. */
+ class DrawerActions(
+     val steam: Boolean,
+-    /** The drawer's heading: the emulator for a program from the rail, else Steam or Desktop. */
++    /** Encabezado del panel: Steam o, para una ejecución auxiliar, un nombre breve del juego. */
+     val title: String? = null,
+     val isHomeApp: Boolean,
+     val androidApps: List<HomeApp.LaunchableApp>,
+diff --git a/app/src/test/java/com/droiddeck/launcher/core/MobilePerformanceTest.kt b/app/src/test/java/com/droiddeck/launcher/core/MobilePerformanceTest.kt
+index 92dbab4..e9b84d4 100644
+--- a/app/src/test/java/com/droiddeck/launcher/core/MobilePerformanceTest.kt
++++ b/app/src/test/java/com/droiddeck/launcher/core/MobilePerformanceTest.kt
+@@ -3,28 +3,53 @@ package com.droiddeck.launcher.core
+ import android.os.PowerManager
+ import org.junit.Assert.assertEquals
+ import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
+ import org.junit.Assert.assertTrue
+ import org.junit.Test
+ 
+ class MobilePerformanceTest {
+-    @Test fun fourGigPhoneUsesSaver() {
++    @Test fun fourGigPhoneKeeps720pAndUsesSaver() {
+         val p = MobilePerformance.automaticForSignals(4L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_NONE)
+         assertEquals(MobilePerformance.SAVER, p.id)
+-        assertEquals(540, p.maxHeight)
++        assertEquals(720, p.maxHeight)
+         assertEquals(30, p.targetFps)
+         assertTrue(p.lowMemory)
+     }
+ 
+-    @Test fun regularPhoneUsesBalancedNotQuality() {
+-        val p = MobilePerformance.automaticForSignals(12L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_NONE)
++    @Test fun sixGigClassPhoneUsesBalanced45() {
++        val p = MobilePerformance.automaticForSignals(6L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_NONE)
+         assertEquals(MobilePerformance.BALANCED, p.id)
+         assertEquals(720, p.maxHeight)
++        assertEquals(45, p.targetFps)
++        assertFalse(p.lowMemory)
++    }
++
++    @Test fun roomyCoolPhoneUses720p60ButNot900pAutomatically() {
++        val p = MobilePerformance.automaticForSignals(8L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_NONE)
++        assertEquals(MobilePerformance.PERFORMANCE, p.id)
++        assertEquals(720, p.maxHeight)
+         assertEquals(60, p.targetFps)
+         assertFalse(p.lowMemory)
+     }
+ 
+-    @Test fun hotPhoneDropsToSaver() {
++    @Test fun moderateHeatBacksRoomyPhoneDownTo45() {
++        val p = MobilePerformance.automaticForSignals(12L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_MODERATE)
++        assertEquals(MobilePerformance.BALANCED, p.id)
++        assertEquals(45, p.targetFps)
++    }
++
++    @Test fun severeHeatDropsToSaverWithoutDroppingBelow720p() {
+         val p = MobilePerformance.automaticForSignals(12L * 1024 * 1024 * 1024, false, PowerManager.THERMAL_STATUS_SEVERE)
+         assertEquals(MobilePerformance.SAVER, p.id)
++        assertEquals(720, p.maxHeight)
++    }
++
++    @Test fun threeGigDeviceIsOutsideSupportedMinimum() {
++        assertNotNull(MobilePerformance.minimumRamIssue(3_000_000_000L))
++    }
++
++    @Test fun nominalFourGigVisibleRamPassesMinimum() {
++        assertNull(MobilePerformance.minimumRamIssue(3_600_000_000L))
+     }
+ }
+diff --git a/docs/BUILD_MALI.md b/docs/BUILD_MALI.md
+index af368d9..bd09c0a 100644
+--- a/docs/BUILD_MALI.md
++++ b/docs/BUILD_MALI.md
+@@ -12,12 +12,14 @@
+ ## Compilación local
+ 
+ ```bash
+-chmod +x ./gradlew
++chmod +x ./gradlew ./tools/gradle/bootstrap-wrapper.sh
+ ./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
+ ```
+ 
++Si el ZIP de fuentes no contiene `gradle/wrapper/gradle-wrapper.jar`, `./gradlew` ejecuta automáticamente `tools/gradle/bootstrap-wrapper.sh`. El bootstrap descarga únicamente el wrapper de Gradle 8.10.2 y exige el SHA-256 `2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046`; si no coincide, la compilación se detiene.
++
+ El APK resultante queda en `app/build/outputs/apk/debug/`.
+ 
+ ## GitHub Actions
+ 
+-El workflow `.github/workflows/build-mali.yml` instala automáticamente el SDK, NDK y CMake requeridos y publica el APK como artefacto de la ejecución.
++El workflow `.github/workflows/build-mali.yml` restaura/verifica el Gradle Wrapper cuando haga falta, instala automáticamente el SDK, NDK y CMake requeridos y publica el APK como artefacto de la ejecución.
+diff --git a/docs/MALI_PORT.md b/docs/MALI_PORT.md
+index 8be842e..df7aeb8 100644
+--- a/docs/MALI_PORT.md
++++ b/docs/MALI_PORT.md
+@@ -237,12 +237,15 @@ se detiene con una explicación y una importación manual compatible sigue siend
+ `MobilePerformance` añade una política conservadora que solo usa señales estables de Android; no intenta
+ adivinar potencia por el nombre comercial del SoC:
+ 
+-- **Ahorro:** 540p / 30 FPS, `MALLOC_ARENA_MAX=2`; automático en low-RAM, RAM <= 4,5 GB o estado térmico severo al iniciar.
+-- **Equilibrado:** 720p / 60 FPS; ruta automática normal.
++- **Ahorro:** 720p / 30 FPS, `MALLOC_ARENA_MAX=2`; automático en el nivel de 4 GB, low-RAM o temperatura severa.
++- **Equilibrado:** 720p / 45 FPS; ruta automática normal para teléfonos con margen intermedio o temperatura moderada.
++- **Fluido:** 720p / 60 FPS; automático solo en el nivel de memoria amplio y sin presión térmica importante, o seleccionable manualmente.
+ - **Calidad:** hasta 900p y frecuencia de la sesión; solo manual.
+ 
+ Una resolución elegida explícitamente por el usuario siempre gana. El perfil Automático nunca sube por sí
+-solo a Calidad: tener mucha RAM no demuestra rendimiento GPU sostenido ni margen térmico.
++solo a Calidad: tener mucha RAM no demuestra rendimiento GPU sostenido ni margen térmico. El requisito mínimo
++del proyecto es 4 GB nominales; Android puede reportar algo menos por memoria reservada, por lo que el gate
++usa un umbral visible conservador que distingue teléfonos nominales de 4 GB frente a equipos de 2–3 GB.
+ 
+ La motivación es especialmente importante en Mali integrado: GPU y CPU comparten la RAM del sistema, y
+ Steam añade CEF/FEX/gamescope antes de que el juego empiece. Reducir píxeles y limitar FPS suele comprar
+@@ -265,3 +268,27 @@ La ruta automática también evita trabajo que no ayuda a jugar:
+ 
+ Los ajustes técnicos de núcleos, Zink, seccomp y hostname quedan detrás de **Mostrar ajustes técnicos**.
+ La fila de Turnip/sysmem se oculta completamente en Mali.
++
++
++## Stage 7 — calidad base 720p, mínimo 4 GB y autoreparación Mali
++
++Stage 7 congela el objetivo de hardware indicado para este fork: **4 GB de RAM nominales como mínimo**.
++DroidDeck ya no intenta convertir teléfonos de 2–3 GB en objetivo bajando agresivamente la calidad. Si Android
++reporta una cantidad de RAM incompatible con un teléfono nominal de 4 GB, el inicio de Steam se detiene con
++una explicación en español antes de descargar o abrir el runtime.
++
++La política automática también cambia de prioridad: se reduce primero el trabajo temporal y el overhead de
++procesos, no la resolución. El nivel mínimo soportado conserva 720p/30; el nivel equilibrado usa 720p/45; y
++un teléfono con amplio margen de memoria y sin presión térmica arranca a 720p/60. 900p continúa siendo una
++opción manual. 540p sigue disponible solo como escape manual para un juego especialmente pesado.
++
++La ruta de controlador Mali corrige dos fallos de recuperación:
++
++1. una selección explícita vieja, eliminada o incompatible se limpia antes de resolver `Automático`, evitando
++   que un ICD automático válido quede oculto por una preferencia rota;
++2. si un ICD Mali descargado automáticamente falla el preflight con códigos 78, 79 o 82, DroidDeck elimina
++   exclusivamente ese paquete administrado, olvida su registro y permite **una sola reinstalación limpia**.
++   Las selecciones manuales nunca se borran y el segundo fallo se muestra al usuario, evitando bucles.
++
++La combinación conserva la filosofía `abrir DroidDeck → preparar lo que falte → Steam` sin sacrificar 720p
++para perseguir hardware fuera del mínimo del proyecto.
+diff --git a/docs/progress-log.md b/docs/progress-log.md
+index 25db70d..9b88a36 100644
+--- a/docs/progress-log.md
++++ b/docs/progress-log.md
+@@ -340,3 +340,14 @@ State: **main = `90c7574`** (PR #14 merge), main build run 35895701784. No tag,
+ - FlatOut shrink: try `vk_wsi_force_swapchain_to_current_extent=false` via `steamdeck-env`.
+ - Max's stricter `winnative-directaudio` guards; `winnative-epic-launch` (a feature).
+ - Rename before anything truly public: "SteamDeck" is Valve's mark. (Done 2026-09-23: DroidDeck.)
++
++## 2026-09-30 — Mali-first Stage 7
++
++- Mínimo del fork fijado en 4 GB nominales. El launcher bloquea Steam por debajo del umbral kernel-visible que representa un teléfono nominal de 4 GB; 2–3 GB dejan de ser objetivo.
++- Perfil móvil reajustado para conservar calidad: Ahorro = 720p/30 + reducción de overhead; Equilibrado = 720p/45; Fluido = 720p/60; Calidad = hasta 900p manual. Automático nunca baja solo a 540p ni sube solo a 900p.
++- Añadido perfil `performance`/Fluido y migración tolerante de preferencias; el reporte de dispositivo muestra RAM visible, requisito y compatibilidad.
++- Corregida la ruta Mali automática cuando una selección explícita guardada está ausente o es incompatible: se sanea antes de resolver el ICD automático.
++- Autoreparación de ICD Mali administrado tras preflight 78/79/82: se elimina solo el driver descargado automáticamente y se intenta una única reinstalación limpia. Drivers manuales no se tocan.
++- Validación Stage 7: 23/23 pruebas Python pasan; scripts, JSON/XML/YAML y permisos de launchers verificados; `mali_kbase_probe.c` compila en host con `-Wall -Wextra -Werror`; la política `MobilePerformance` compila aparte con stubs Android y conserva 720p en todos los perfiles automáticos.
++- La build Gradle/Android completa no pudo ejecutarse en este entorno porque el ZIP Stage 6 no traía `gradle-wrapper.jar` y el entorno de trabajo no tiene salida DNS/Android SDK. Stage 7 corrige la primera parte con bootstrap verificado; el APK se considera pendiente hasta ejecutar el workflow o una máquina con SDK/red.
++- Build reproducible: los ZIP que no traigan `gradle-wrapper.jar` ahora se recuperan con `tools/gradle/bootstrap-wrapper.sh`; el wrapper 8.10.2 se valida contra SHA-256 antes de ejecutarse y GitHub Actions hace la misma verificación.
+diff --git a/gradlew b/gradlew
+old mode 100644
+new mode 100755
+index 4f906e0..9716e36
+--- a/gradlew
++++ b/gradlew
+@@ -43,6 +43,12 @@ cd "$SAVED" >/dev/null
+ APP_NAME="Gradle"
+ APP_BASE_NAME=`basename "$0"`
+ 
++# Source ZIPs can omit the binary wrapper JAR. Restore the exact pinned wrapper
++# automatically and verify its SHA-256 before Java is started.
++if [ ! -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ] && [ -f "$APP_HOME/tools/gradle/bootstrap-wrapper.sh" ]; then
++    sh "$APP_HOME/tools/gradle/bootstrap-wrapper.sh" || exit $?
++fi
++
+ # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+ 
+diff --git a/tools/build_local.sh b/tools/build_local.sh
+index 26577c5..d15248e 100644
+--- a/tools/build_local.sh
++++ b/tools/build_local.sh
+@@ -108,7 +108,7 @@ docker run --rm --platform linux/amd64 \
+             -o "$d/libblsession.so" tools/linuxfs/preload/*.c -ldl
+         aarch64-linux-gnu-strip --strip-unneeded "$d/libblsession.so"
+         for script in tools/linuxfs/overlay/usr/local/bin/bannerlator-*; do
+-            install -Dm644 "$script" "$d/usr/local/bin/$(basename "$script")"
++            install -Dm755 "$script" "$d/usr/local/bin/$(basename "$script")"
+         done
+         for f in tools/linuxfs/overlay/usr/bin/* tools/linuxfs/overlay/usr/bin/steamos-polkit-helpers/*; do
+             [ -f "$f" ] && install -Dm644 "$f" "$d/${f#tools/linuxfs/overlay/}"
+diff --git a/tools/gradle/bootstrap-wrapper.sh b/tools/gradle/bootstrap-wrapper.sh
+new file mode 100755
+index 0000000..8fd044e
+--- /dev/null
++++ b/tools/gradle/bootstrap-wrapper.sh
+@@ -0,0 +1,54 @@
++#!/usr/bin/env sh
++set -eu
++
++# DroidDeck keeps the Gradle version pinned in gradle-wrapper.properties. Some source
++# archives omit the binary wrapper JAR, so restore only the exact upstream 8.10.2
++# wrapper and verify it before Gradle is allowed to run.
++ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
++WRAPPER="$ROOT/gradle/wrapper/gradle-wrapper.jar"
++EXPECTED_SHA256="2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046"
++URL="https://raw.githubusercontent.com/gradle/gradle/v8.10.2/gradle/wrapper/gradle-wrapper.jar"
++
++sha256_file() {
++    if command -v sha256sum >/dev/null 2>&1; then
++        sha256sum "$1" | awk '{print $1}'
++    elif command -v shasum >/dev/null 2>&1; then
++        shasum -a 256 "$1" | awk '{print $1}'
++    else
++        echo "No se encontró sha256sum ni shasum para verificar Gradle Wrapper." >&2
++        exit 2
++    fi
++}
++
++if [ -f "$WRAPPER" ]; then
++    actual=$(sha256_file "$WRAPPER")
++    if [ "$actual" = "$EXPECTED_SHA256" ]; then
++        exit 0
++    fi
++    echo "El Gradle Wrapper existente no coincide con el SHA-256 esperado; no se usará." >&2
++    rm -f "$WRAPPER"
++fi
++
++mkdir -p "$(dirname -- "$WRAPPER")"
++tmp="$WRAPPER.tmp.$$"
++trap 'rm -f "$tmp"' EXIT HUP INT TERM
++
++if command -v curl >/dev/null 2>&1; then
++    curl --fail --location --silent --show-error --retry 3 --connect-timeout 15 \
++        --output "$tmp" "$URL"
++elif command -v wget >/dev/null 2>&1; then
++    wget -q --tries=3 --timeout=30 -O "$tmp" "$URL"
++else
++    echo "Se necesita curl o wget para restaurar Gradle Wrapper." >&2
++    exit 2
++fi
++
++actual=$(sha256_file "$tmp")
++if [ "$actual" != "$EXPECTED_SHA256" ]; then
++    echo "Gradle Wrapper descargado rechazado: SHA-256 inesperado ($actual)." >&2
++    exit 3
++fi
++
++mv "$tmp" "$WRAPPER"
++trap - EXIT HUP INT TERM
++echo "Gradle Wrapper 8.10.2 restaurado y verificado."
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-game-env b/tools/linuxfs/overlay/usr/local/bin/bannerlator-game-env
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-netmanager b/tools/linuxfs/overlay/usr/local/bin/bannerlator-netmanager
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-proton-extra b/tools/linuxfs/overlay/usr/local/bin/bannerlator-proton-extra
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-seed-redists b/tools/linuxfs/overlay/usr/local/bin/bannerlator-seed-redists
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-session b/tools/linuxfs/overlay/usr/local/bin/bannerlator-session
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-compat b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-compat
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-games b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-games
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-install b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-install
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-library b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-library
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-shim b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-shim
+old mode 100644
+new mode 100755
+diff --git a/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-shortcuts b/tools/linuxfs/overlay/usr/local/bin/bannerlator-steam-shortcuts
+old mode 100644
+new mode 100755
