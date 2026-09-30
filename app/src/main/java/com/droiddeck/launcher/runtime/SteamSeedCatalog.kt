@@ -70,17 +70,19 @@ object SteamSeedCatalog {
 
         val download = File(context.cacheDir, "steam-seed-${entry.id}.download")
         try {
+            listener?.onProgress("Conectando para descargar ${entry.name}…", -1)
             listener?.onProgress("Descargando ${entry.name}", 0)
             val ok = Downloader.downloadFile(entry.url, download, true) { f ->
                 listener?.onProgress("Descargando ${entry.name}", if (f < 0) -1 else Math.round(f * 100f))
             }
             if (!ok) return "La descarga falló"
-            listener?.onProgress("Comprobando", -1)
+            listener?.onProgress("Verificando integridad", -1)
             if (!entry.sha256.equals(Hashes.sha256(download), ignoreCase = true)) {
                 return "La suma SHA-256 no coincide; no se cambió nada"
             }
-            listener?.onProgress("Instalando ${entry.name}", -1)
+            listener?.onProgress("Descomprimiendo e instalando ${entry.name}", -1)
             if (!LinuxRuntimeInstaller.extract(download, root, listener)) return "No se pudo extraer el paquete"
+            listener?.onProgress("Registrando ${entry.name} en Steam", 100)
             if (!FileUtils.writeString(marker(context, entry.id), entry.version)) {
                 return "El paquete se extrajo, pero no se pudo guardar su versión instalada"
             }
