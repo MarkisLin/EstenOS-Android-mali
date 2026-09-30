@@ -73,6 +73,8 @@ class LoadingState(context: Context) {
         var clientDownloadAt = -1
         var clientDownload: String? = null
         var clientPercent = -1
+        var diagnosticAt = -1
+        var diagnostic: String? = null
         var offset = 0
         for (line in text.split('\n')) {
             val at = offset
@@ -94,9 +96,30 @@ class LoadingState(context: Context) {
                     val total = maxOf(1L, m.groupValues[2].toLong())
                     downloadPercent = (done * 100 / total).toInt()
                 }
+                val diag = when {
+                    line.contains("preflight Mali Kbase: enumeración Vulkan", ignoreCase = true) ->
+                        "Validando Vulkan en la GPU Mali…"
+                    line.contains("preflight Mali Kbase: Zink/EGL", ignoreCase = true) ->
+                        "Probando Zink para la interfaz de Steam…"
+                    line.contains("preflight Mali Kbase: prueba mínima de gamescope/Wayland", ignoreCase = true) ->
+                        "Probando gamescope y Wayland…"
+                    line.contains("preflight Mali Kbase: Vulkan/Zink/gamescope correcto", ignoreCase = true) ->
+                        "Controlador Mali validado correctamente"
+                    line.contains("controlador Vulkan: importado", ignoreCase = true) ->
+                        "Cargando el controlador Vulkan Mali…"
+                    line.startsWith("== Steam terminó rc=") ->
+                        "Steam terminó durante el arranque"
+                    else -> null
+                }
+                if (diag != null) {
+                    diagnosticAt = at
+                    diagnostic = diag
+                }
             }
         }
         return when {
+            diagnosticAt > maxOf(stepAt, downloadAt, clientDownloadAt) && diagnostic != null ->
+                Pair(diagnostic, -1)
             downloadAt > stepAt && downloadPercent >= 0 ->
                 Pair("Descargando la actualización de Steam · $downloadPercent%", downloadPercent)
             clientDownloadAt == stepAt && clientDownload != null ->
