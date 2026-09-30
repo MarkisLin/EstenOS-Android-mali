@@ -2,6 +2,10 @@ name: Bootstrap EstenOS Mali Stage 7
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/bootstrap-stage7.yml'
 
 permissions:
   contents: write
