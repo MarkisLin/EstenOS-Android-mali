@@ -997,7 +997,8 @@ index 4155a29..10924a2 100644
      }
  
      fun instructions(status: PhantomProcessStatus): String = when (status) {
--        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence() + " If that is not possible, connect this device to a computer with ADB and run the command below. Return here and check again."-        PhantomProcessStatus.DISABLED -> "Steam sessions can start."
+-        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence() + " If that is not possible, connect this device to a computer with ADB and run the command below. Return here and check again."
+-        PhantomProcessStatus.DISABLED -> "Steam sessions can start."
 -        PhantomProcessStatus.NOT_APPLICABLE -> "This Android version does not use this limit."
 +        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence() + " Si no es posible, conecta el dispositivo a un ordenador con ADB y ejecuta el comando de abajo. Vuelve aquí y comprueba de nuevo."
 +        PhantomProcessStatus.DISABLED -> "Las sesiones de Steam pueden iniciarse."
@@ -1996,7 +1997,8 @@ index 8c302b8..8e04640 100644
                  // ── Basic info ──
 @@ -79,14 +79,14 @@ internal fun FilePropertiesDialog(
                      overflow = TextOverflow.Ellipsis,
-                 )                 Spacer(Modifier.height(6.dp))
+                 )
+                 Spacer(Modifier.height(6.dp))
 -                PropertyLine("Location", file.parent ?: "-")
 +                PropertyLine("Ubicación", file.parent ?: "-")
                  PropertyLine(
@@ -2995,7 +2997,8 @@ index f4e4787..b8bf13e 100644
          }
 -        if (failed.size == SOURCES.size) throw lastError ?: IOException("no source answered")
 +        if (failed.size == SOURCES.size) throw lastError ?: IOException("ninguna fuente respondió")
-         val stored = JSONObject().put("assets", assets).put("latest", latest)             .put("failed", JSONArray(failed)).put("checkedAt", System.currentTimeMillis())
+         val stored = JSONObject().put("assets", assets).put("latest", latest)
+             .put("failed", JSONArray(failed)).put("checkedAt", System.currentTimeMillis())
          prefs(context).edit().putString(KEY_RELEASE, stored.toString()).apply()
 @@ -124,8 +124,8 @@ object TurnipReleases {
          c.setRequestProperty("User-Agent", "DroidDeck-app")
@@ -3994,7 +3997,8 @@ index ee5ffd4..2c7d199 100644
          }
 -        SettingsGroup("Defaults") {
 -            ActionRow("Reset mapping", "Every button sends its own input again", "Reset", onReset)
-+        SettingsGroup("Predeterminados") {+            ActionRow("Restablecer asignación", "Cada botón vuelve a enviar su entrada original", "Restablecer", onReset)
++        SettingsGroup("Predeterminados") {
++            ActionRow("Restablecer asignación", "Cada botón vuelve a enviar su entrada original", "Restablecer", onReset)
          }
      }
  }
@@ -4993,7 +4997,8 @@ index 27d412e..6561631 100644
 -                        SectionTitle("System check", null)
 +                        SectionTitle("Comprobación del sistema", null)
                          // What Steam needs, one row each: green when done, one button when not. The
-                         // process-limit controls only open under their row.                         Column(modifier = Modifier.fillMaxWidth().clip(Shape14).background(colors.surface).border(1.dp, pal.line, Shape14)) {
+                         // process-limit controls only open under their row.
+                         Column(modifier = Modifier.fillMaxWidth().clip(Shape14).background(colors.surface).border(1.dp, pal.line, Shape14)) {
                              CheckRow(
                                  if (gpuOk) CheckState.OK else CheckState.WARN,
                                  if (gpuOk) when (DeviceSupport.family()) {
@@ -5992,7 +5997,8 @@ index cae45fa..c1fdbce 100644
          if (open) Column(
 @@ -230,20 +230,20 @@ private fun OtherWays(
              verticalArrangement = Arrangement.spacedBy(8.dp),
-         ) {             if (hasToggle) {
+         ) {
+             if (hasToggle) {
 -                SecondaryButton("Use Wireless debugging instead", compact = true, onClick = onFixWithWirelessDebugging)
 +                SecondaryButton("Usar depuración inalámbrica", compact = true, onClick = onFixWithWirelessDebugging)
              } else {
@@ -6991,7 +6997,8 @@ diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strin
 index 10cf334..965a49d 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -2,88 +2,88 @@ <resources>
+@@ -2,88 +2,88 @@
+ <resources>
      <string name="app_name">DroidDeck</string>
      <string-array name="loading_hints">
 -        <item>First run downloads Steam. This may take a few minutes.</item>
