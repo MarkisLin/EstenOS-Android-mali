@@ -36,7 +36,20 @@ jobs:
           git apply "$PATCHES/03-stage3.patch"
           git apply "$PATCHES/04-stage4.patch"
           git apply "$PATCHES/05-stage5.patch"
-          patch --batch --forward -p2 < "$PATCHES/06-stage5.1-buildfix.patch"
+          # Stage 5.1 was created from a source ZIP whose Gradle properties used CRLF.
+          # Apply its text additions separately, then write the canonical LF wrapper config.
+          awk '/^diff -ruN .*gradle\/wrapper\/gradle-wrapper.properties/{exit} {print}' \
+            "$PATCHES/06-stage5.1-buildfix.patch" | patch --batch --forward -p2
+          cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.10.2-bin.zip
+distributionSha256Sum=31c55713e40233a8303827ceb42ca48a47267a0ad4bab9177123121e71524c26
+networkTimeout=60000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
           git apply "$PATCHES/07-stage6.patch"
           git apply "$PATCHES/08-stage7.patch"
 
