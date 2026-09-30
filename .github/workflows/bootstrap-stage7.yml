@@ -20,18 +20,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PATCH_B64="$GITHUB_WORKSPACE/bootstrap/EstenOS-Mali-stage7-cumulative.patch.gz.b64"
-          test -s "$PATCH_B64"
-          base64 -d "$PATCH_B64" > "$RUNNER_TEMP/stage7.patch.gz"
-          gzip -dc "$RUNNER_TEMP/stage7.patch.gz" > "$RUNNER_TEMP/stage7.patch"
+          ROOT="$GITHUB_WORKSPACE"
+          PATCHES="$ROOT/bootstrap/patches"
 
           git clone https://github.com/Droid-Deck/DroidDeck.git "$RUNNER_TEMP/upstream"
           cd "$RUNNER_TEMP/upstream"
           git checkout --detach 6ecd6fa1d0cd293d3e55a0c7a7c71e9cde251c4f
-          git apply --binary --index "$RUNNER_TEMP/stage7.patch"
 
-          cd "$GITHUB_WORKSPACE"
-          rsync -a --delete --exclude='.git/' "$RUNNER_TEMP/upstream/" "$GITHUB_WORKSPACE/"
+          patch --batch --forward -p5 < "$PATCHES/01-stage1.patch"
+          patch --batch --forward -p2 < "$PATCHES/02-stage2.patch"
+          git apply "$PATCHES/03-stage3.patch"
+          git apply "$PATCHES/04-stage4.patch"
+          git apply "$PATCHES/05-stage5.patch"
+          patch --batch --forward -p2 < "$PATCHES/06-stage5.1-buildfix.patch"
+          git apply "$PATCHES/07-stage6.patch"
+          git apply "$PATCHES/08-stage7.patch"
+
+          # Stage 7 source distribution intentionally relies on the verified wrapper bootstrap.
+          rm -f gradle/wrapper/gradle-wrapper.jar
+
+          cd "$ROOT"
+          rsync -a --delete --exclude='.git/' "$RUNNER_TEMP/upstream/" "$ROOT/"
 
           git config user.name "EstenOS Mali Bootstrap"
           git config user.email "actions@users.noreply.github.com"
@@ -42,4 +51,4 @@ jobs:
       - name: Summary
         run: |
           echo "Stage 7 reconstructed from Droid-Deck/DroidDeck@6ecd6fa1d0cd293d3e55a0c7a7c71e9cde251c4f." >> "$GITHUB_STEP_SUMMARY"
-          echo "The resulting tree includes the Mali-first build workflow." >> "$GITHUB_STEP_SUMMARY"
+          echo "Stage patches 1 through 7 were applied in order and committed to main." >> "$GITHUB_STEP_SUMMARY"
