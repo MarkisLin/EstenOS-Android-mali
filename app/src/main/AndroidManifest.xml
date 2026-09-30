@@ -12,6 +12,8 @@
          process at perceptible priority, and a high-performance WiFi lock keeps a backgrounded
          download from being throttled to nothing by the radio's power-save. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ requires the matching capability for long-running network/file transfers. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Ends background processes of another app that holds the Steam login. GameHub starts
@@ -129,7 +131,15 @@
         <!-- Holds the process in the foreground while the Linux runtime downloads and unpacks. -->
         <service
             android:name=".runtime.RuntimeInstallService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <!-- Keeps first-run downloads (runtime, Mali driver and Proton) alive while the user
+             switches apps or turns the screen off. -->
+        <service
+            android:name=".runtime.BootstrapInstallService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
         <service
             android:name=".core.WirelessAdbPairingService"
             android:exported="false" />
