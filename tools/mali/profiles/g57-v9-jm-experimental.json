@@ -6,12 +6,12 @@
   "guestBackend": "mali-kbase",
   "frontend": "jm",
   "uapiMajor": 11,
-  "productIds": ["0x9093"],
-  "referenceDevice": "Mali-G57 JM / Unisoc T820 + public G57 validation",
+  "productIds": ["0x9091", "0x9093"],
+  "referenceDevice": "Mali-G57 JM / Unisoc T820 (0x9091) + public G57 validation (0x9093)",
   "releaseSource": "apexspan-svg/mesa-panvk-mali-g57",
   "releaseTag": "v1.0.0-async",
   "releaseSha256": "32f2241c2eba26b87d8dc7fa6c17fe4a2bffd7de8e60596c6203fc7b1f4d247e",
   "maturity": "public-experimental",
   "autoDownload": true,
-  "notes": "Perfil Valhall v9 Job Manager. Solo acepta producto Kbase 0x9093 y UAPI major 11; el minor se valida en ejecución mediante el preflight Vulkan/Zink/gamescope. El paquete automático es AArch64 glibc para PRoot, no Bionic/AdrenoTools."
+  "notes": "Perfil Valhall v9 Job Manager. Acepta las variantes G57 Kbase 0x9091 y 0x9093 con UAPI major 11; el minor se valida en ejecución mediante el preflight Vulkan/Zink/gamescope. El T820 del nubia Neo 2 reporta 0x9091 / GPU ID 0x90910010 / 4 núcleos. El paquete automático es AArch64 glibc para PRoot, no Bionic/AdrenoTools."
 }
