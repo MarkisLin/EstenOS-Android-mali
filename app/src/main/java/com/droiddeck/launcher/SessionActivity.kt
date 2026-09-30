@@ -1025,8 +1025,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                             it.contains("error", ignoreCase = true) ||
                             it.contains("falló", ignoreCase = true)
                     }
-                    .takeLast(4)
                     .toList()
+                    .takeLast(4)
                 meaningful.lastOrNull()?.let { "Último diagnóstico: " + it.removePrefix("== ").take(420) }
             }
         } catch (e: Exception) {
