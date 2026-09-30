@@ -1,0 +1,83 @@
+name: Build PanVK G57 Kbase Wayland
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-panvk-g57-wayland.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             git meson ninja-build pkg-config             python3 python3-mako python3-ply python3-yaml             bison flex             zlib1g-dev libzstd-dev libexpat1-dev             libdrm-dev libwayland-dev wayland-protocols             libx11-dev libx11-xcb-dev             libxcb1-dev libxcb-dri3-dev libxcb-present-dev             libxcb-randr0-dev libxcb-sync-dev             libxshmfence-dev libxxf86vm-dev             libxrandr-dev libxext-dev libxdamage-dev libxfixes-dev             unzip zip binutils
+
+      - name: Clone pinned G57 Kbase source
+        run: |
+          set -euo pipefail
+          git clone https://github.com/apexspan-svg/mesa-panvk-mali-g57.git src
+          cd src
+          git checkout --detach 80d34bc8bfd551212b10308ca4dcbcc0eec15581
+          test "$(git rev-parse HEAD)" = "80d34bc8bfd551212b10308ca4dcbcc0eec15581"
+
+      - name: Configure PanVK with X11 + Wayland WSI
+        run: |
+          set -euo pipefail
+          cd src
+          meson setup build-estenos             -Dbuildtype=release             -Dpanvk-use-kbase=true             -Dvulkan-drivers=panfrost             -Dgallium-drivers=             -Dplatforms=x11,wayland             -Dglx=disabled             -Ddebug=false             -Dstrip=true             -Dbuild-tests=false             -Dtools=[]             -Dvideo-codecs=
+
+      - name: Build PanVK
+        run: |
+          set -euo pipefail
+          ninja -C src/build-estenos -j"$(nproc)" src/panfrost/vulkan/libvulkan_panfrost.so
+
+      - name: Validate ELF and Wayland WSI
+        run: |
+          set -euo pipefail
+          SO=src/build-estenos/src/panfrost/vulkan/libvulkan_panfrost.so
+          file "$SO"
+          readelf -h "$SO" | grep 'Machine:.*AArch64'
+          readelf -d "$SO" | grep NEEDED
+          strings "$SO" | grep -F 'VK_KHR_wayland_surface'
+          strings "$SO" | grep -F 'vkCreateWaylandSurfaceKHR'
+
+      - name: Package immutable EstenOS driver
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp src/build-estenos/src/panfrost/vulkan/libvulkan_panfrost.so out/
+          cat > out/BUILD.txt <<'EOF'
+          EstenOS PanVK Mali-G57/Kbase
+          upstream: apexspan-svg/mesa-panvk-mali-g57
+          source commit: 80d34bc8bfd551212b10308ca4dcbcc0eec15581
+          platforms: x11,wayland
+          vulkan driver: panfrost
+          kmd: kbase
+          architecture: aarch64 glibc
+          EOF
+          (cd out && zip -9 ../panvk-g57-kbase-wayland-v1.zip libvulkan_panfrost.so BUILD.txt)
+          sha256sum panvk-g57-kbase-wayland-v1.zip | tee panvk-g57-kbase-wayland-v1.zip.sha256
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panvk-g57-kbase-wayland-v1
+          path: |
+            panvk-g57-kbase-wayland-v1.zip
+            panvk-g57-kbase-wayland-v1.zip.sha256
+
+      - name: Publish pinned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=panvk-g57-kbase-wayland-v1
+          gh release create "$TAG" -R "${GITHUB_REPOSITORY}"             --title "$TAG"             --notes "Pinned AArch64 glibc PanVK G57/Kbase build from 80d34bc8bfd551212b10308ca4dcbcc0eec15581 with X11 + Wayland WSI enabled."             panvk-g57-kbase-wayland-v1.zip panvk-g57-kbase-wayland-v1.zip.sha256             || gh release upload "$TAG" -R "${GITHUB_REPOSITORY}"               panvk-g57-kbase-wayland-v1.zip panvk-g57-kbase-wayland-v1.zip.sha256 --clobber
