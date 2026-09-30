@@ -76,7 +76,7 @@ object ProtonExtras {
         if (asset.size > 0 && archive.length() > asset.size) archive.delete()
         val missing = (asset.size - archive.length()).coerceAtLeast(0L)
         if (StatFs(LinuxRuntime.rootDir(context).path).availableBytes < NEED_BYTES + missing) {
-            return "At least 4 GB free plus the download size is required to install ${tool.name}"
+            return "Se necesitan al menos 4 GB libres, además del tamaño de la descarga, para instalar ${tool.name}"
         }
 
         onProgress("Conectando con GitHub…", -1)
