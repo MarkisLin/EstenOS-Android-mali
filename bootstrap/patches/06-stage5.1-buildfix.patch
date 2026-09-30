@@ -1,0 +1,102 @@
+diff -ruN stage5-base-original/DroidDeck-main/.github/workflows/build-mali.yml droiddeck-stage5-build/DroidDeck-main/.github/workflows/build-mali.yml
+--- stage5-base-original/DroidDeck-main/.github/workflows/build-mali.yml	1970-01-01 00:00:00.000000000 +0000
++++ droiddeck-stage5-build/DroidDeck-main/.github/workflows/build-mali.yml	2026-09-30 16:21:12.348423202 +0000
+@@ -0,0 +1,53 @@
++name: Compilar DroidDeck Mali
++
++on:
++  workflow_dispatch:
++  push:
++    branches: [ main, mali-main ]
++  pull_request:
++
++jobs:
++  apk:
++    runs-on: ubuntu-latest
++    timeout-minutes: 60
++    steps:
++      - name: Descargar código
++        uses: actions/checkout@v4
++
++      - name: Configurar Java 17
++        uses: actions/setup-java@v4
++        with:
++          distribution: temurin
++          java-version: '17'
++          cache: gradle
++
++      - name: Configurar Android SDK
++        uses: android-actions/setup-android@v3
++
++      - name: Instalar SDK, NDK y CMake
++        shell: bash
++        run: |
++          yes | sdkmanager --licenses >/dev/null || true
++          sdkmanager \
++            'platforms;android-34' \
++            'build-tools;34.0.0' \
++            'ndk;27.3.13750724' \
++            'cmake;3.22.1'
++
++      - name: Verificar Gradle Wrapper
++        shell: bash
++        run: |
++          chmod +x ./gradlew
++          ./gradlew --version
++
++      - name: Compilar APK debug Mali
++        env:
++          DROIDDECK_BUILD_LABEL: github-actions-mali
++        run: ./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
++
++      - name: Subir APK
++        uses: actions/upload-artifact@v4
++        with:
++          name: DroidDeck-Mali-debug
++          path: app/build/outputs/apk/debug/*.apk
++          if-no-files-found: error
+diff -ruN stage5-base-original/DroidDeck-main/docs/BUILD_MALI.md droiddeck-stage5-build/DroidDeck-main/docs/BUILD_MALI.md
+--- stage5-base-original/DroidDeck-main/docs/BUILD_MALI.md	1970-01-01 00:00:00.000000000 +0000
++++ droiddeck-stage5-build/DroidDeck-main/docs/BUILD_MALI.md	2026-09-30 16:21:12.349950040 +0000
+@@ -0,0 +1,23 @@
++# Compilación de DroidDeck Mali
++
++## Requisitos
++
++- JDK 17
++- Gradle 8.10.2 (el wrapper verifica SHA-256)
++- Android SDK Platform 34
++- Android Build Tools 34.0.0
++- Android NDK 27.3.13750724
++- CMake 3.22.1
++
++## Compilación local
++
++```bash
++chmod +x ./gradlew
++./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
++```
++
++El APK resultante queda en `app/build/outputs/apk/debug/`.
++
++## GitHub Actions
++
++El workflow `.github/workflows/build-mali.yml` instala automáticamente el SDK, NDK y CMake requeridos y publica el APK como artefacto de la ejecución.
+diff -ruN stage5-base-original/DroidDeck-main/gradle/wrapper/gradle-wrapper.properties droiddeck-stage5-build/DroidDeck-main/gradle/wrapper/gradle-wrapper.properties
+--- stage5-base-original/DroidDeck-main/gradle/wrapper/gradle-wrapper.properties	2026-09-30 16:21:27.510135233 +0000
++++ droiddeck-stage5-build/DroidDeck-main/gradle/wrapper/gradle-wrapper.properties	2026-09-30 16:21:12.343774472 +0000
+@@ -1,6 +1,8 @@
+-#Fri Jun 07 19:24:10 CST 2024
+-distributionBase=GRADLE_USER_HOME
+-distributionPath=wrapper/dists
+-distributionUrl=https\://services.gradle.org/distributions/gradle-8.10.2-all.zip
+-zipStoreBase=GRADLE_USER_HOME
+-zipStorePath=wrapper/dists
++distributionBase=GRADLE_USER_HOME
++distributionPath=wrapper/dists
++distributionUrl=https\://services.gradle.org/distributions/gradle-8.10.2-bin.zip
++distributionSha256Sum=31c55713e40233a8303827ceb42ca48a47267a0ad4bab9177123121e71524c26
++networkTimeout=60000
++validateDistributionUrl=true
++zipStoreBase=GRADLE_USER_HOME
++zipStorePath=wrapper/dists
