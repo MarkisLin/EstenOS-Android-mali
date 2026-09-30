@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import com.droiddeck.launcher.MainActivity
 import com.droiddeck.launcher.R
 
@@ -22,7 +23,26 @@ import com.droiddeck.launcher.R
  * two gets there first.
  */
 class RuntimeInstallService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        wakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "${packageName}:runtime-install",
+        )?.apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+        super.onDestroy()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val release = intent?.let(::releaseFrom)
