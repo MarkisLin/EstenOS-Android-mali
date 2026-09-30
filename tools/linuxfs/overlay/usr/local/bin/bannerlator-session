@@ -110,7 +110,7 @@ if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
     if [ -n "${BL_VK_DRIVER:-}" ] && [ -n "${BL_SELECTED_ICD_LIB:-}" ]; then
       _bl_icd_hash=$(sha256sum "$BL_SELECTED_ICD_LIB" 2>/dev/null | awk '{print $1}')
       [ -n "$_bl_icd_hash" ] || _bl_icd_hash=$(basename "$BL_SELECTED_ICD_LIB" | tr -cd 'A-Za-z0-9._-')
-      BL_MALI_PREFLIGHT_MARKER="${XDG_CACHE_HOME:-$HOME/.cache}/droiddeck/mali-preflight/v2-${BL_MALI_KBASE_FRONTEND:-unknown}-${BL_MALI_PRODUCT_ID:-unknown}-${BL_MALI_KBASE_UAPI:-unknown}-${BL_MALI_PROFILE:-unqualified}-${_bl_icd_hash}.ok"
+      BL_MALI_PREFLIGHT_MARKER="${XDG_CACHE_HOME:-$HOME/.cache}/droiddeck/mali-preflight/v3-${BL_MALI_KBASE_FRONTEND:-unknown}-${BL_MALI_PRODUCT_ID:-unknown}-${BL_MALI_KBASE_UAPI:-unknown}-${BL_MALI_PROFILE:-unqualified}-${_bl_icd_hash}.ok"
       mkdir -p "$(dirname "$BL_MALI_PREFLIGHT_MARKER")" 2>/dev/null || true
       if [ -f "$BL_MALI_PREFLIGHT_MARKER" ]; then
         echo "== preflight Mali Kbase: resultado en caché correcto"
@@ -218,10 +218,10 @@ if [ -z "${BL_INSIDE:-}" ]; then
     echo "== preflight Mali Kbase: prueba mínima de gamescope/Wayland"
     _bl_smoke_log=$(mktemp /tmp/droiddeck-gamescope-smoke.XXXXXX)
     if command -v timeout >/dev/null 2>&1; then
-      timeout 15s gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/true >"$_bl_smoke_log" 2>&1
+      timeout 15s env VK_LOADER_DEBUG=error,warn gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
       _bl_smoke_rc=$?
     else
-      gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/true >"$_bl_smoke_log" 2>&1
+      env VK_LOADER_DEBUG=error,warn gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
       _bl_smoke_rc=$?
     fi
     if [ "$_bl_smoke_rc" -ne 0 ]; then
