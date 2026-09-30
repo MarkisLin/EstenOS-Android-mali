@@ -580,28 +580,39 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             else -> "descargando Proton Experimental (ARM64)"
         }
         loading.percent = -1
+        com.droiddeck.launcher.runtime.BootstrapInstallService.start(this, loading.step, loading.percent)
         Thread({
-            var failureCode = "STEAM_BOOTSTRAP_FAILED"
-            var problem: String? = null
-            if (runtime) {
-                problem = installRuntime()
+            try {
+                var failureCode = "STEAM_BOOTSTRAP_FAILED"
+                var problem: String? = null
+                if (runtime) {
+                    com.droiddeck.launcher.runtime.BootstrapInstallService.update(
+                        applicationContext, "Descargando el entorno Linux", -1,
+                    )
+                    problem = installRuntime()
                 if (problem == null) SessionEvents.record("runtime.ready") else failureCode = "RUNTIME_INSTALL_FAILED"
             }
-            if (problem == null && maliDriver && !SessionState.stopRequested) {
-                SessionState.installing = "mali-driver"
+                if (problem == null && maliDriver && !SessionState.stopRequested) {
+                    SessionState.installing = "mali-driver"
+                    com.droiddeck.launcher.runtime.BootstrapInstallService.update(
+                        applicationContext, "Preparando el controlador Mali", -1,
+                    )
                 SessionEvents.transition(SessionPhase.INSTALLING_RUNTIME, "mali-driver.installing", mapOf("component" to "mali-driver"))
                 problem = installMaliDriver()
                 if (problem == null) SessionEvents.record("mali-driver.ready") else failureCode = "MALI_DRIVER_INSTALL_FAILED"
             }
-            if (problem == null && proton && !SessionState.stopRequested) {
-                SessionState.installing = "proton"
+                if (problem == null && proton && !SessionState.stopRequested) {
+                    SessionState.installing = "proton"
+                    com.droiddeck.launcher.runtime.BootstrapInstallService.update(
+                        applicationContext, "Descargando Proton Experimental (ARM64)", -1,
+                    )
                 SessionEvents.transition(SessionPhase.INSTALLING_RUNTIME, "proton.installing", mapOf("component" to "proton"))
                 val protonProblem = installProton()
                 if (protonProblem == null) SessionEvents.record("proton.ready")
                 else SessionEvents.record("proton.skipped", mapOf("reason" to protonProblem))
             }
-            uiHandler.post {
-                installingRuntime = false
+                uiHandler.post {
+                    installingRuntime = false
                 SessionState.installing = null
                 if (SessionState.stopRequested) {
                     SessionState.stopRequested = false
@@ -619,7 +630,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 }
                 loading.percent = -1
                 loading.step = "Iniciando la sesión…"
-                if (surfaceView.holder.surface?.isValid == true) surfaceCreated(surfaceView.holder)
+                    if (surfaceView.holder.surface?.isValid == true) surfaceCreated(surfaceView.holder)
+                }
+            } finally {
+                com.droiddeck.launcher.runtime.BootstrapInstallService.stop(applicationContext)
             }
         }, "runtime-install").start()
     }
@@ -635,13 +649,15 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     /** Reports one package's download on the loading screen: "<what> · 332 of 791 MB", checking, unpacking. */
     private fun progressFor(what: String, mb: Long) = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.ProgressListener { stage, p ->
+        val message = when {
+            stage.startsWith("Descargando") -> if (p >= 0 && mb > 0) "descargando $what · ${p * mb / 100} de $mb MB" else "descargando $what"
+            stage.startsWith("Comprobando") -> "comprobando $what"
+            else -> "descomprimiendo $what"
+        }
+        com.droiddeck.launcher.runtime.BootstrapInstallService.update(applicationContext, message, p)
         uiHandler.post {
             loading.percent = p
-            loading.step = when {
-                stage.startsWith("Descargando") -> if (p >= 0 && mb > 0) "descargando $what · ${p * mb / 100} de $mb MB" else "descargando $what"
-                stage.startsWith("Comprobando") -> "comprobando $what"
-                else -> "descomprimiendo $what"
-            }
+            loading.step = message
         }
     }
 
@@ -658,6 +674,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private fun installMaliDriver(): String? {
         return try {
             com.droiddeck.launcher.gpu.MaliDriverBootstrap.ensure(this) { stage, pct ->
+                com.droiddeck.launcher.runtime.BootstrapInstallService.update(applicationContext, stage, pct)
                 uiHandler.post { loading.step = stage; loading.percent = pct }
             }
             null
