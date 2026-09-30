@@ -107,8 +107,8 @@ public final class MaliKbaseProfiles {
     // at least 11.38 and 11.46, and the real Vulkan/Zink/gamescope preflight remains authoritative.
     private static final Profile G57_V9_JM = new Profile(
             "g57-v9-jm", "Mali-G57", 9, "jm",
-            11, -1, -1, new long[]{0x9093L},
-            "Mali-G57 JM / Unisoc T820 + public G57 validation",
+            11, -1, -1, new long[]{0x9091L, 0x9093L},
+            "Mali-G57 JM / Unisoc T820 (0x9091) + public G57 validation (0x9093)",
             Maturity.PUBLIC_EXPERIMENTAL, true
     );
 
@@ -179,6 +179,7 @@ public final class MaliKbaseProfiles {
         out.put("maliKbaseFrontend", "jm");
         out.put("maliKbaseUapiMajor", 11);
         JSONArray products = new JSONArray();
+        products.put("0x9091");
         products.put("0x9093");
         out.put("maliProductIds", products);
         out.put("testedDevice", G57_V9_JM.testedDevice);
