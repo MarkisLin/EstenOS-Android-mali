@@ -19,6 +19,18 @@ public final class MaliKbaseProfiles {
     public static final String RELEASE_SOURCE_LABEL = "PanVK-Kbase";
     public static final String RELEASE_REPO = "zenithblue-oss/panvk-kbase-android";
 
+    // Pinned experimental glibc build for Valhall v9 / Job Manager. Unlike Winlator/AdrenoTools
+    // packages, this asset is an AArch64 GNU/Linux ICD and can be loaded directly by our PRoot
+    // runtime. Keep URL + checksum immutable so "Automatic" never turns into a moving target.
+    public static final String G57_RELEASE_SOURCE_LABEL = "PanVK-G57-glibc";
+    public static final String G57_RELEASE_REPO = "apexspan-svg/mesa-panvk-mali-g57";
+    public static final String G57_RELEASE_TAG = "v1.0.0-async";
+    public static final String G57_RELEASE_URL =
+            "https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-async/"
+                    + "panvk-mali-g57-v1.0.0-glibc-async.zip";
+    public static final String G57_RELEASE_SHA256 =
+            "32f2241c2eba26b87d8dc7fa6c17fe4a2bffd7de8e60596c6203fc7b1f4d247e";
+
     public enum Maturity {
         QUALIFIED_GLIBC,
         PUBLIC_EXPERIMENTAL,
@@ -89,6 +101,17 @@ public final class MaliKbaseProfiles {
             Maturity.PUBLIC_EXPERIMENTAL, false
     );
 
+    // Valhall v9 / JM. Public hardware logs identify Mali-G57 as GPU ID 0x90930010,
+    // canonical product 0x9093. The pinned glibc package is explicitly built for PRoot/containers.
+    // We intentionally match UAPI major 11 but do not freeze the minor: public G57/JM devices span
+    // at least 11.38 and 11.46, and the real Vulkan/Zink/gamescope preflight remains authoritative.
+    private static final Profile G57_V9_JM = new Profile(
+            "g57-v9-jm", "Mali-G57", 9, "jm",
+            11, -1, -1, new long[]{0x9093L},
+            "Mali-G57 JM / Unisoc T820 + public G57 validation",
+            Maturity.PUBLIC_EXPERIMENTAL, true
+    );
+
     // Public G52/JM work reports full GPU ID 0x74021000 -> product 0x7402, Kbase UAPI 11.38.
     // WSI and basic DXVK rendering have public evidence, but several advertised Vulkan features
     // remain experimental, so this is recognition/manual packaging only.
@@ -99,7 +122,7 @@ public final class MaliKbaseProfiles {
             Maturity.PUBLIC_EXPERIMENTAL, false
     );
 
-    private static final Profile[] KNOWN = new Profile[]{G615_V11_CSF, G720_V12_CSF, G52_V7_JM};
+    private static final Profile[] KNOWN = new Profile[]{G615_V11_CSF, G720_V12_CSF, G57_V9_JM, G52_V7_JM};
 
     private MaliKbaseProfiles() {}
 
@@ -118,7 +141,9 @@ public final class MaliKbaseProfiles {
                 case QUALIFIED_GLIBC:
                     return p.displayGpu + " reconocida · perfil glibc PanVK-Kbase calificado disponible";
                 case PUBLIC_EXPERIMENTAL:
-                    return p.displayGpu + " reconocida · PanVK/Kbase público experimental; todavía sin paquete glibc integrado";
+                    return p.glibcReleaseIntegrated
+                            ? p.displayGpu + " JM reconocida · PanVK glibc experimental disponible; se validará antes de abrir Steam"
+                            : p.displayGpu + " reconocida · PanVK/Kbase público experimental; todavía sin paquete glibc integrado";
                 case BRINGUP:
                     return p.displayGpu + " reconocida · soporte Kbase todavía en fase de bring-up";
                 default:
@@ -133,6 +158,34 @@ public final class MaliKbaseProfiles {
                     + " todavía sin perfil glibc calificado en DroidDeck";
         }
         return "Kbase detectado · frontend sin clasificar";
+    }
+
+    public static boolean isPinnedG57(Profile profile) {
+        return profile != null && G57_V9_JM.id.equals(profile.id);
+    }
+
+    /** Trusted metadata for the one immutable G57/JM glibc asset accepted by Automatic. */
+    public static JSONObject trustedPinnedG57Metadata(String tag) throws JSONException {
+        if (!G57_RELEASE_TAG.equals(tag)) return null;
+        JSONObject out = new JSONObject();
+        out.put("schemaVersion", 4);
+        out.put("source", G57_RELEASE_SOURCE_LABEL);
+        out.put("sourceRepo", G57_RELEASE_REPO);
+        out.put("sourceTag", G57_RELEASE_TAG);
+        out.put("sourceSha256", G57_RELEASE_SHA256);
+        out.put("maliProfile", G57_V9_JM.id);
+        out.put("maliPanArch", G57_V9_JM.panArch);
+        out.put("guestBackend", "mali-kbase");
+        out.put("maliKbaseFrontend", "jm");
+        out.put("maliKbaseUapiMajor", 11);
+        JSONArray products = new JSONArray();
+        products.put("0x9093");
+        out.put("maliProductIds", products);
+        out.put("testedDevice", G57_V9_JM.testedDevice);
+        out.put("driverVersion", "1.0.0-glibc-async");
+        out.put("qualification", "experimental");
+        out.put("minGlibc", "2.38");
+        return out;
     }
 
     /** Profile encoded by an immutable PanVK-Kbase release tag, or null when not qualified here. */
