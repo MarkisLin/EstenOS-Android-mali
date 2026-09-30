@@ -997,7 +997,8 @@ index f65d85a..4cd5ffb 100644
 +features and native BC texture compression). Therefore “Vulkan starts” must not be presented as
 +“all Windows games work.” Each Mali profile needs its own capability and game validation.
 +
-+An RPC/Venus-style bridge remains a fallback research direction for devices where direct Kbase is+not accessible or cannot support the required userspace, but it is no longer the primary Stage 3
++An RPC/Venus-style bridge remains a fallback research direction for devices where direct Kbase is
++not accessible or cannot support the required userspace, but it is no longer the primary Stage 3
 +architecture.
 +
 +## Do not regress these invariants
