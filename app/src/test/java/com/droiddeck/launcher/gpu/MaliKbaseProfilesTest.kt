@@ -64,6 +64,33 @@ class MaliKbaseProfilesTest {
     }
 
     @Test
+    fun t820G57Product9091_uapi1136_isQualifiedForPinnedJmDriver() {
+        val t820 = MaliKbaseProbe.Result(
+            usable = true,
+            frontend = MaliKbaseProbe.Frontend.JM,
+            uapiMajor = 11,
+            uapiMinor = 36,
+            productId = 0x9091L,
+            versionStatus = 0,
+            majorRevision = 0,
+            minorRevision = 1,
+            shaderPresent = 0x0fL,
+            errno = 0,
+            gpuId = 0x90910010L,
+        )
+
+        val profile = MaliKbaseProfiles.forDevice(t820)
+        assertNotNull(profile)
+        assertEquals("g57-v9-jm", profile!!.id)
+        assertTrue(profile.glibcReleaseIntegrated)
+
+        val metadata = MaliKbaseProfiles.trustedPinnedG57Metadata(MaliKbaseProfiles.G57_RELEASE_TAG)
+        assertNotNull(metadata)
+        val products = metadata!!.getJSONArray("maliProductIds")
+        assertTrue((0 until products.length()).any { products.getString(it) == "0x9091" })
+    }
+
+    @Test
     fun bionicAssets_areNeverOfferedAsGuestDrivers() {
         assertNull(MaliKbaseProfiles.releaseAssetLabel("driver-ADPKG.zip", "g615-v11-csf-v0.1.0-beta.3"))
         assertNotNull(MaliKbaseProfiles.releaseAssetLabel("PanVK-EMULATOR.zip", "g615-v11-csf-v0.1.0-beta.3"))
