@@ -957,6 +957,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             80 -> "Vulkan funciona, pero Zink no pudo crear el contexto gráfico necesario para la sesión de Steam."
             81 -> "Vulkan y Zink funcionan, pero gamescope no pudo iniciar sobre el backend Wayland."
             82 -> "El preflight detectó Vulkan por software (lavapipe/llvmpipe) en lugar de la GPU Mali. Revisa el ICD PanVK seleccionado."
+            83 -> "Steam terminó con código 0 antes de mostrar el primer fotograma. Ahora se conserva esta pantalla para que puedas ver y compartir el motivo real del arranque fallido."
             else -> null
         }
         loading.showEnded(
@@ -1005,7 +1006,29 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             if (enosys >= 8) {
                 "El registro muestra $enosys errores \"Function not implemented\": la aceleración seccomp de proot está fallando con un proceso auxiliar en este dispositivo. " +
                     "Prueba Rendimiento → \"Ejecutar proot sin seccomp\" (o \"Omitir el proceso xalia de Steam\") y vuelve a iniciar."
-            } else null
+            } else {
+                val tail = java.io.RandomAccessFile(log, "r").use { f ->
+                    val start = maxOf(0L, f.length() - 128L * 1024)
+                    f.seek(start)
+                    val bytes = ByteArray((f.length() - start).toInt())
+                    f.readFully(bytes)
+                    String(bytes, Charsets.ISO_8859_1)
+                }
+                val meaningful = tail.lineSequence()
+                    .map { it.trim() }
+                    .filter {
+                        it.startsWith("== preflight", ignoreCase = true) ||
+                            it.startsWith("== Steam terminó", ignoreCase = true) ||
+                            it.startsWith("== controlador Vulkan", ignoreCase = true) ||
+                            it.startsWith("== Mali Kbase", ignoreCase = true) ||
+                            it.contains("failed", ignoreCase = true) ||
+                            it.contains("error", ignoreCase = true) ||
+                            it.contains("falló", ignoreCase = true)
+                    }
+                    .takeLast(4)
+                    .toList()
+                meaningful.lastOrNull()?.let { "Último diagnóstico: " + it.removePrefix("== ").take(420) }
+            }
         } catch (e: Exception) {
             null
         }
