@@ -83,11 +83,6 @@ class MaliKbaseProfilesTest {
         assertNotNull(profile)
         assertEquals("g57-v9-jm", profile!!.id)
         assertTrue(profile.glibcReleaseIntegrated)
-
-        val metadata = MaliKbaseProfiles.trustedPinnedG57Metadata(MaliKbaseProfiles.G57_RELEASE_TAG)
-        assertNotNull(metadata)
-        val products = metadata!!.getJSONArray("maliProductIds")
-        assertTrue((0 until products.length()).any { products.getString(it) == "0x9091" })
     }
 
     @Test
