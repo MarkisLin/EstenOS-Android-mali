@@ -68,7 +68,9 @@ object ProtonExtras {
         if (SessionState.running) return "Detén la sesión activa antes de instalar herramientas de compatibilidad"
         if (!LinuxRuntime.isInstalled(context)) return "Instala primero el entorno Linux"
 
+        onProgress("Buscando la última versión ARM64 de ${tool.name}…", -1)
         val asset = findLatestAsset(tool) ?: return "No se encontró una versión ARM64 para ${tool.name}"
+        onProgress("Comprobando espacio disponible…", -1)
         val downloads = File(context.filesDir, "proton-downloads").apply { mkdirs() }
         val archive = File(downloads, "${tool.id}-${asset.name}")
         if (asset.size > 0 && archive.length() > asset.size) archive.delete()
@@ -77,6 +79,7 @@ object ProtonExtras {
             return "At least 4 GB free plus the download size is required to install ${tool.name}"
         }
 
+        onProgress("Conectando con GitHub…", -1)
         onProgress("Descargando ${tool.name} ${asset.tag}", 0)
         var downloaded = false
         for (attempt in 0 until 5) {
@@ -103,7 +106,7 @@ object ProtonExtras {
 
         // One checksum has to be found and has to match: GitHub's sha256 digest, else the
         // release's own sha512 file. A download neither vouches for is not installed.
-        onProgress("Verificando descarga", -1)
+        onProgress("Verificando integridad de la descarga…", -1)
         val verified = when {
             asset.sha256 != null -> asset.sha256.equals(Hashes.sha256(archive), ignoreCase = true)
             asset.sha512 != null -> {
@@ -122,7 +125,7 @@ object ProtonExtras {
         }
 
         if (SessionState.running) return "Se inició una sesión durante la descarga; detenla antes de instalar herramientas de compatibilidad"
-        onProgress("Instalando ${tool.name}", -1)
+        onProgress("Preparando instalación de ${tool.name}…", -1)
         return try {
             val root = LinuxRuntime.rootDir(context)
             LinuxRuntime.writeAccounts(context)
@@ -145,14 +148,22 @@ object ProtonExtras {
             child.inputStream.bufferedReader().useLines { lines ->
                 lines.forEach { line ->
                     Log.i(TAG, line)
-                    if (line.contains("unpacking", ignoreCase = true) || line.contains("adopted", ignoreCase = true)) {
-                        onProgress("Instalando ${tool.name}", -1)
+                    if (line.startsWith("BL_PROGRESS\t")) {
+                        val parts = line.split('\t')
+                        val phase = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "Instalando ${tool.name}…"
+                        val pct = parts.getOrNull(2)?.toIntOrNull()?.coerceIn(-1, 100) ?: -1
+                        onProgress(phase, pct)
+                    } else if (line.contains("unpacking", ignoreCase = true)) {
+                        onProgress("Descomprimiendo ${tool.name}…", -1)
+                    } else if (line.contains("installed", ignoreCase = true) || line.contains("adopted", ignoreCase = true)) {
+                        onProgress("Registrando ${tool.name} en Steam…", -1)
                     }
                 }
             }
             val status = child.waitFor()
             if (status != 0) "${tool.name}: falló la instalación (código $status)"
             else {
+                onProgress("${tool.name} listo para Steam", 100)
                 archive.delete()
                 unqueue(context, tool)
                 null
