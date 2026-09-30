@@ -71,8 +71,8 @@ class BootstrapInstallService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_UPDATE -> {
-                val stage = intent.getStringExtra(EXTRA_STAGE) ?: "Preparando EstenOS…"
-                val percent = intent.getIntExtra(EXTRA_PERCENT, -1)
+                val stage = intent?.getStringExtra(EXTRA_STAGE) ?: "Preparando EstenOS…"
+                val percent = intent?.getIntExtra(EXTRA_PERCENT, -1) ?: -1
                 getSystemService(NotificationManager::class.java)
                     ?.notify(NOTIFICATION_ID, notification(stage, percent))
             }
