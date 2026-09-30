@@ -1,0 +1,45 @@
+name: Bootstrap EstenOS Mali Stage 7
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout bootstrap repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild Stage 7 from pinned DroidDeck upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_B64="$GITHUB_WORKSPACE/bootstrap/EstenOS-Mali-stage7-cumulative.patch.gz.b64"
+          test -s "$PATCH_B64"
+          base64 -d "$PATCH_B64" > "$RUNNER_TEMP/stage7.patch.gz"
+          gzip -dc "$RUNNER_TEMP/stage7.patch.gz" > "$RUNNER_TEMP/stage7.patch"
+
+          git clone https://github.com/Droid-Deck/DroidDeck.git "$RUNNER_TEMP/upstream"
+          cd "$RUNNER_TEMP/upstream"
+          git checkout --detach 6ecd6fa1d0cd293d3e55a0c7a7c71e9cde251c4f
+          git apply --binary --index "$RUNNER_TEMP/stage7.patch"
+
+          cd "$GITHUB_WORKSPACE"
+          rsync -a --delete --exclude='.git/' "$RUNNER_TEMP/upstream/" "$GITHUB_WORKSPACE/"
+
+          git config user.name "EstenOS Mali Bootstrap"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "EstenOS Mali Stage 7: reproducible Mali-first base"
+          git push origin HEAD:main
+
+      - name: Summary
+        run: |
+          echo "Stage 7 reconstructed from Droid-Deck/DroidDeck@6ecd6fa1d0cd293d3e55a0c7a7c71e9cde251c4f." >> "$GITHUB_STEP_SUMMARY"
+          echo "The resulting tree includes the Mali-first build workflow." >> "$GITHUB_STEP_SUMMARY"
