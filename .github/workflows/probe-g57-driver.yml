@@ -1,0 +1,36 @@
+name: Probe Mali-G57 glibc driver
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/probe-g57-driver.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pinned G57/JM glibc driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-async/panvk-mali-g57-v1.0.0-glibc-async.zip'
+          curl -L --fail --retry 3 "$URL" -o /tmp/g57.zip
+          sha256sum /tmp/g57.zip
+          unzip -l /tmp/g57.zip
+          mkdir -p /tmp/g57
+          unzip -q /tmp/g57.zip -d /tmp/g57
+          find /tmp/g57 -type f -maxdepth 4 -print
+          while IFS= read -r so; do
+            echo "=== $so"
+            file "$so"
+            readelf -h "$so" | grep -E 'Class:|Machine:|Type:' || true
+            readelf -d "$so" | grep NEEDED || true
+          done < <(find /tmp/g57 -type f -name '*.so' | sort)
+      - name: Upload inspected package
+        uses: actions/upload-artifact@v4
+        with:
+          name: panvk-g57-glibc-inspected
+          path: /tmp/g57.zip
+          if-no-files-found: error
