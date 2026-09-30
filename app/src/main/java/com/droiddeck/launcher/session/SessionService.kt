@@ -416,8 +416,24 @@ class SessionService : Service() {
                 Log.i(TAG, "an earlier session's process ended ($status); the current one carries on")
                 return@start
             }
-            Log.i(TAG, "session ended: $status")
-            stopSession(status ?: -1)
+            val rawStatus = status ?: -1
+            // A clean rc=0 is only a clean session after the compositor has actually presented
+            // something. Steam/updaters can exit 0 during bootstrap; treating that as success made
+            // SessionActivity silently sink back to the menu and hid the only useful diagnostics.
+            val effectiveStatus = if (
+                rawStatus == 0 &&
+                SessionState.mode == MODE_STEAM &&
+                !SessionState.firstFrameSeen
+            ) {
+                SessionEvents.fail(
+                    "STEAM_EARLY_EXIT",
+                    "Steam terminó antes de mostrar el primer fotograma",
+                    83,
+                )
+                83
+            } else rawStatus
+            Log.i(TAG, "session ended: raw=$rawStatus effective=$effectiveStatus firstFrame=${SessionState.firstFrameSeen}")
+            stopSession(effectiveStatus)
         }, null)
         Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
         if (gen != sessionGen || !SessionState.running) {
