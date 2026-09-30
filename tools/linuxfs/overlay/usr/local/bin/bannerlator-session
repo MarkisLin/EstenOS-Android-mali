@@ -651,6 +651,7 @@ BUSCONF
     # An update that cannot install asks for a restart (rc=42) every time; the count is capped so a
     # session can never again loop in silence, which reads as a menu opening and closing by itself.
     steam_updates=0
+    steam_zero_restarts=0
     rm -f "$HOME/.bl-stop-requested"
     if [ -n "${BL_LAUNCH_DIR:-}" ] && [ -d "$BL_LAUNCH_DIR" ]; then
       rm -f "$BL_LAUNCH_DIR/steam-stop"
@@ -695,6 +696,44 @@ BUSCONF
         set --
         continue
       fi
+
+      # Some Steam bootstrap builds hand the real client to a detached child and let the launcher
+      # process return 0. gamescope is supervising this script, not that detached child; breaking
+      # here therefore closed the whole session before the first frame. If Steam is still alive,
+      # keep this script alive as its supervisor until the handed-off client really ends.
+      if [ "$rc" -eq 0 ]; then
+        _bl_handoff=0
+        for _ in $(seq 1 20); do
+          if pgrep -f 'steamwebhelper|steamrtarm64/steam' >/dev/null 2>&1; then
+            _bl_handoff=1
+            break
+          fi
+          sleep 0.25
+        done
+        if [ "$_bl_handoff" -eq 1 ]; then
+          step "Steam transfirió el arranque a un proceso secundario; esperando al cliente"
+          while pgrep -f 'steamwebhelper|steamrtarm64/steam' >/dev/null 2>&1; do
+            [ -f "$HOME/.bl-stop-requested" ] && break
+            sleep 1
+          done
+          echo "== Steam: el proceso secundario transferido terminó"
+          break
+        fi
+
+        # A bootstrap/update can also replace files and ask for a fresh invocation by simply
+        # returning 0. Retry only a few times so a genuinely broken client never loops forever.
+        steam_zero_restarts=$((steam_zero_restarts + 1))
+        if [ "$steam_zero_restarts" -le 3 ]; then
+          step "Steam cerró el bootstrap sin cliente activo; reintentando ($steam_zero_restarts/3)"
+          set --
+          sleep 2
+          continue
+        fi
+        echo "== Steam: rc=0 sin cliente activo después de $steam_zero_restarts intentos"
+        rc=83
+        break
+      fi
+
       [ "$rc" -eq 42 ] || break
       steam_updates=$((steam_updates + 1))
       if [ "$steam_updates" -ge 3 ]; then
