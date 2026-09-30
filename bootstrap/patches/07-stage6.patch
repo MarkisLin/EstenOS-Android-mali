@@ -997,7 +997,8 @@ index 2838150..abefc25 100644
 -                lm.getMinGlibc(id).let { if (it.isEmpty()) "" else " (glibc $it+)" } +
 -                lm.getGuestBackend(id).let { if (it.isEmpty()) "" else " [$it]" } +
 -                lm.getKbaseProfileSummary(id).let { if (it.isEmpty()) "" else " {$it}" } +
--                lm.getReleaseSummary(id).let { if (it.isEmpty()) "" else " <$it>" } +-                if (!lm.isInstalled(id)) "  [MISSING - falls back to the runtime's own]"
+-                lm.getReleaseSummary(id).let { if (it.isEmpty()) "" else " <$it>" } +
+-                if (!lm.isInstalled(id)) "  [MISSING - falls back to the runtime's own]"
 -                else lm.compatibilityIssue(id)?.let { "  [INCOMPATIBLE: $it]" }.orEmpty()
 -            k("Linux driver ($m)", label)
 +        val configuredLinux = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
@@ -1996,7 +1997,8 @@ index d490ef1..328ddd5 100644
          // The producer uses -EMULATOR.zip for the ARM64 glibc runtime consumer. Keep a glibc
 @@ -92,9 +174,9 @@ public final class MaliKbaseProfiles {
          out.put("maliPanArch", p.panArch);
-         out.put("guestBackend", "mali-kbase");         out.put("maliKbaseFrontend", p.frontend);
+         out.put("guestBackend", "mali-kbase");
+         out.put("maliKbaseFrontend", p.frontend);
 -        out.put("maliKbaseUapiMajor", p.uapiMajor);
 -        out.put("maliKbaseMinUapiMinor", p.uapiMinMinor);
 -        out.put("maliKbaseMaxUapiMinor", p.uapiMaxMinor);
@@ -2995,7 +2997,8 @@ index 6302e30..3bf0e99 100644
 +        // thread/CPU and retain a surprising amount of RSS across Steam's many helper processes.
 +        // Keep the change scoped to the Ahorro profile; faster devices retain glibc defaults.
 +        if (mobilePlan.lowMemory) {
-+            guest.add("MALLOC_ARENA_MAX=2")+            guest.add("BL_LOW_MEMORY=1")
++            guest.add("MALLOC_ARENA_MAX=2")
++            guest.add("BL_LOW_MEMORY=1")
 +            // mangoapp remains a separate process even while its overlay is hidden. On the Ahorro
 +            // path, keep that RAM/CPU budget for Steam and the game instead.
 +            guest.add("BL_MANGOAPP=0")
@@ -3994,7 +3997,8 @@ index 4ab5144..8be842e 100644
 -features and native BC texture compression). Therefore “Vulkan starts” must not be presented as
 -“all Windows games work.” Each Mali profile needs its own capability and game validation.
 +## Estado de validación de Stage 6
- -An RPC/Venus-style bridge remains a fallback research direction for devices where direct Kbase is
+ 
+-An RPC/Venus-style bridge remains a fallback research direction for devices where direct Kbase is
 -not accessible or cannot support the required userspace, but it is no longer the primary Stage 3
 -architecture.
 +Esta etapa se valida sin generar APK, deliberadamente, porque el usuario pidió continuar afinando el
@@ -4993,7 +4997,8 @@ index adba13d..0000000
 -def ini_section(lines, name):
 -    """(start, end) line indices of [name]'s body, or None."""
 -    start = None
--    for i, l in enumerate(lines):-        t = l.strip()
+-    for i, l in enumerate(lines):
+-        t = l.strip()
 -        if t.startswith("[") and t.endswith("]"):
 -            if start is not None:
 -                return start, i
@@ -5992,7 +5997,8 @@ index 0d9c8ec..336cbf0 100644
 -# (OpenGL through Zink), every game Proton launches, and in desktop mode every program on it.
 +# (OpenGL through Zink) y cada juego que Proton inicia.
  # BL_VK_DRIVER names an imported driver's ICD manifest on the Android side, which is bound into the
- # session at its own path; unset means the runtime keeps the matching Vulkan ICD it was built with. # VK_DRIVER_FILES REPLACES the loader's search, so a manifest whose library is unreadable would
+ # session at its own path; unset means the runtime keeps the matching Vulkan ICD it was built with.
+ # VK_DRIVER_FILES REPLACES the loader's search, so a manifest whose library is unreadable would
 @@ -71,7 +75,7 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
      # glibc loader resolve those helpers from the imported package without copying them into /usr.
      bl_icd_dir=$(dirname "$bl_icd_lib")
@@ -6991,7 +6997,8 @@ index 658233f..0000000
 -+		.arrayLayers = 1,
 -+		.samples = VK_SAMPLE_COUNT_1_BIT,
 -+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
--+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,-+		.extent = (VkExtent3D){ width, height, 1 },
+-+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+-+		.extent = (VkExtent3D){ width, height, 1 },
 -+		.usage = vulkan_render_usage,
 -+		.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
 -+	};
