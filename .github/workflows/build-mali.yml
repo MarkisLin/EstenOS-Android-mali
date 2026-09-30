@@ -1,0 +1,54 @@
+name: Compilar DroidDeck Mali
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, mali-main ]
+  pull_request:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK, NDK y CMake
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-34' \
+            'build-tools;34.0.0' \
+            'ndk;27.3.13750724' \
+            'cmake;3.22.1'
+
+      - name: Restaurar y verificar Gradle Wrapper
+        shell: bash
+        run: |
+          chmod +x ./gradlew ./tools/gradle/bootstrap-wrapper.sh
+          ./tools/gradle/bootstrap-wrapper.sh
+          ./gradlew --version
+
+      - name: Compilar APK debug Mali
+        env:
+          DROIDDECK_BUILD_LABEL: github-actions-mali
+        run: ./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDeck-Mali-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
