@@ -1,0 +1,422 @@
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt	2026-09-30 02:17:15.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceReport.kt	2026-09-30 13:48:12.189337261 +0000
+@@ -102,6 +102,8 @@
+         h("GPU")
+         k("GPU family", DeviceSupport.family().name)
+         k("Host Vulkan backend", DeviceSupport.hostVulkanBackend().name)
++        k("Guest GPU backend", DeviceSupport.guestGpuBackend().name)
++        k("Usable DRM render node", DeviceSupport.usableDrmRenderNode() ?: "none")
+         k("GPU support", DeviceSupport.supportSummary())
+         k("KGSL gpu_model", readSys("/sys/class/kgsl/kgsl-3d0/gpu_model"))
+         k("KGSL chip id", readSys("/sys/class/kgsl/kgsl-3d0/gpu_chipid"))
+@@ -138,7 +140,9 @@
+             val label = if (id.isEmpty()) "runtime default ($runtimeDefault)"
+             else "${lm.getDriverName(id)} ${lm.getDriverVersion(id)}".trim() +
+                 lm.getMinGlibc(id).let { if (it.isEmpty()) "" else " (glibc $it+)" } +
+-                if (lm.isInstalled(id)) "" else "  [MISSING - falls back to the runtime's own]"
++                lm.getGuestBackend(id).let { if (it.isEmpty()) "" else " [$it]" } +
++                if (!lm.isInstalled(id)) "  [MISSING - falls back to the runtime's own]"
++                else if (!lm.isCompatibleWithDevice(id)) "  [INCOMPATIBLE with ${DeviceSupport.guestGpuBackend()}]" else ""
+             k("Linux driver ($m)", label)
+         }
+         k("Runtime's own ICD", LinuxRuntime.vulkanIcd(context)?.path)
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt	2026-09-30 02:08:44.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/core/DeviceSupport.kt	2026-09-30 13:46:23.125091183 +0000
+@@ -1,6 +1,8 @@
+ package com.droiddeck.launcher.core
+ 
+ import android.os.Build
++import android.system.Os
++import android.system.OsConstants
+ import java.io.File
+ 
+ /**
+@@ -14,6 +16,16 @@
+     enum class GpuFamily { ADRENO, MALI, XCLIPSE, POWERVR, UNKNOWN }
+     enum class HostVulkanBackend { ADRENO_TURNIP, SYSTEM_VULKAN }
+ 
++    /** GPU interface that the glibc guest can actually drive. Host Vulkan is a separate choice. */
++    enum class GuestGpuBackend {
++        ADRENO_KGSL,
++        /** Mainline/custom kernels exposing a render node usable by PanVK (Panfrost/Panthor). */
++        MALI_DRM,
++        /** Stock ARM/MediaTek/Samsung Mali kernel ABI (/dev/mali0); needs our Android bridge. */
++        MALI_PROPRIETARY,
++        NONE
++    }
++
+     private val familyValue: GpuFamily by lazy { detectFamily() }
+ 
+     @JvmStatic
+@@ -39,9 +51,45 @@
+         else -> HostVulkanBackend.SYSTEM_VULKAN
+     }
+ 
++    /**
++     * Linux guest GPU ABI. Do not confuse this with [hostVulkanBackend]: a stock Mali phone can
++     * render the Android compositor perfectly while still lacking a Linux DRM ABI for PanVK.
++     */
++    @JvmStatic
++    fun guestGpuBackend(): GuestGpuBackend = when (family()) {
++        GpuFamily.ADRENO -> if (File("/dev/kgsl-3d0").exists()) GuestGpuBackend.ADRENO_KGSL else GuestGpuBackend.NONE
++        GpuFamily.MALI -> {
++            if (usableDrmRenderNode() != null) GuestGpuBackend.MALI_DRM
++            else if (existsAny("/dev/mali0", "/sys/class/misc/mali0")) GuestGpuBackend.MALI_PROPRIETARY
++            else GuestGpuBackend.NONE
++        }
++        else -> GuestGpuBackend.NONE
++    }
++
++    /** First DRM render node this app can really open, not merely stat through Android /dev. */
++    @JvmStatic
++    fun usableDrmRenderNode(): String? {
++        val dir = File("/dev/dri")
++        val nodes = runCatching {
++            dir.listFiles()?.filter { it.name.startsWith("renderD") }?.sortedBy { it.name } ?: emptyList()
++        }.getOrDefault(emptyList())
++        for (node in nodes) {
++            val fd = runCatching { Os.open(node.path, OsConstants.O_RDWR or OsConstants.O_CLOEXEC, 0) }.getOrNull()
++            if (fd != null) {
++                runCatching { Os.close(fd) }
++                return node.path
++            }
++        }
++        return null
++    }
++
+     @JvmStatic
+     fun supportSummary(): String = when (family()) {
+-        GpuFamily.MALI -> "ARM Mali detected · Mali system-Vulkan path enabled (experimental)"
++        GpuFamily.MALI -> when (guestGpuBackend()) {
++            GuestGpuBackend.MALI_DRM -> "ARM Mali detected · system Vulkan host + PanVK-capable DRM guest path"
++            GuestGpuBackend.MALI_PROPRIETARY -> "ARM Mali detected · system Vulkan host + proprietary Mali guest bridge required"
++            else -> "ARM Mali detected · system Vulkan host; no guest GPU node is accessible"
++        }
+         GpuFamily.ADRENO -> "Adreno detected · legacy Turnip/KGSL path enabled"
+         GpuFamily.XCLIPSE -> "Xclipse detected · no guest GPU backend yet"
+         GpuFamily.POWERVR -> "PowerVR detected · no guest GPU backend yet"
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java	2026-09-30 02:10:29.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriver.java	2026-09-30 13:48:12.189262471 +0000
+@@ -69,6 +69,11 @@
+             Log.w(TAG, "imported Linux driver \"" + value + "\" is gone; using the runtime's own driver");
+             return null;
+         }
++        if (!m.isCompatibleWithDevice(value)) {
++            Log.w(TAG, "imported Linux driver \"" + value + "\" does not match guest backend "
++                    + com.droiddeck.launcher.core.DeviceSupport.guestGpuBackend() + "; ignoring it");
++            return null;
++        }
+         Log.i(TAG, "Linux session draws with imported driver " + value + " (" + icd + ")");
+         return icd;
+     }
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java	2026-09-30 02:17:15.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/gpu/LinuxVulkanDriverManager.java	2026-09-30 13:48:12.188480437 +0000
+@@ -5,6 +5,7 @@
+ import android.util.Log;
+ 
+ import com.droiddeck.launcher.core.FileUtils;
++import com.droiddeck.launcher.core.DeviceSupport;
+ 
+ import org.json.JSONObject;
+ 
+@@ -117,6 +118,36 @@
+         return m != null ? m.optString("minGlibc", "") : "";
+     }
+ 
++    /** Optional guest ABI declared by the package: adreno-kgsl, mali-drm or mali-proprietary. */
++    public String getGuestBackend(String id) {
++        JSONObject m = readMeta(id);
++        return m != null ? m.optString("guestBackend", "") : "";
++    }
++
++    /**
++     * Refuse known-incompatible GPU kernel ABIs before Vulkan gets a chance to fail opaquely.
++     * Old/generic packages remain selectable unless their library name identifies a known backend.
++     */
++    public boolean isCompatibleWithDevice(String id) {
++        if (!isInstalled(id)) return false;
++        String declared = getGuestBackend(id).toLowerCase(Locale.US).replace('_', '-');
++        DeviceSupport.GuestGpuBackend actual = DeviceSupport.guestGpuBackend();
++        if (!declared.isEmpty()) {
++            if (declared.equals("adreno-kgsl")) return actual == DeviceSupport.GuestGpuBackend.ADRENO_KGSL;
++            if (declared.equals("mali-drm") || declared.equals("panvk")) return actual == DeviceSupport.GuestGpuBackend.MALI_DRM;
++            if (declared.equals("mali-proprietary") || declared.equals("mali-bridge"))
++                return actual == DeviceSupport.GuestGpuBackend.MALI_PROPRIETARY;
++        }
++        String lib = getLibraryName(id).toLowerCase(Locale.US);
++        if (lib.contains("panvk") || lib.contains("panfrost"))
++            return actual == DeviceSupport.GuestGpuBackend.MALI_DRM;
++        if (lib.contains("freedreno") || lib.contains("turnip"))
++            return actual == DeviceSupport.GuestGpuBackend.ADRENO_KGSL;
++        if (lib.contains("mali-bridge") || lib.contains("droiddeck_mali"))
++            return actual == DeviceSupport.GuestGpuBackend.MALI_PROPRIETARY;
++        return true;
++    }
++
+     /** The selected ICD library's original basename. */
+     public String getLibraryName(String id) {
+         String name = installedLibraryName(id);
+@@ -197,6 +228,7 @@
+             String version = zipMeta != null ? zipMeta.optString("driverVersion", "") : "";
+             String minGlibc = zipMeta != null ? zipMeta.optString("minGlibc", "") : "";
+             String gpuFamily = zipMeta != null ? zipMeta.optString("gpuFamily", "") : "";
++            String guestBackend = zipMeta != null ? zipMeta.optString("guestBackend", "") : "";
+             if (name.isEmpty()) {
+                 name = displayName != null ? displayName : soName;
+                 if (name.toLowerCase(Locale.US).endsWith(".zip")) name = name.substring(0, name.length() - 4);
+@@ -224,6 +256,7 @@
+             meta.put("libraryName", soName);
+             meta.put("sourceLibraryName", soName);
+             if (!gpuFamily.isEmpty()) meta.put("gpuFamily", gpuFamily);
++            if (!guestBackend.isEmpty()) meta.put("guestBackend", guestBackend);
+             meta.put("importedAt", System.currentTimeMillis());
+             if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) {
+                 throw new IOException("cannot write meta.json");
+@@ -235,7 +268,8 @@
+             if (!tmpDir.renameTo(dir)) throw new IOException("cannot move into " + dir);
+             keep = true;
+             Log.i(TAG, "imported Linux Vulkan driver " + id + " (" + soName
+-                    + ", minGlibc=" + minGlibc + ", gpuFamily=" + gpuFamily + ") -> " + dir);
++                    + ", minGlibc=" + minGlibc + ", gpuFamily=" + gpuFamily
++                    + ", guestBackend=" + guestBackend + ") -> " + dir);
+             return id;
+         } catch (org.json.JSONException e) {
+             throw new IOException("manifest write failed: " + e.getMessage());
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java	2026-09-30 02:09:02.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/runtime/LinuxRuntime.java	2026-09-30 13:47:05.457030396 +0000
+@@ -100,11 +100,16 @@
+         if (manifests == null || manifests.length == 0) return null;
+ 
+         String[] preferred;
+-        switch (DeviceSupport.family()) {
+-            case MALI:
+-                preferred = new String[]{"panvk", "panfrost", "mali"};
++        switch (DeviceSupport.guestGpuBackend()) {
++            case MALI_DRM:
++                preferred = new String[]{"panvk", "panfrost"};
+                 break;
+-            case ADRENO:
++            case MALI_PROPRIETARY:
++                // A normal glibc PanVK package cannot drive ARM's stock /dev/mali0 kernel ABI.
++                // Only select a runtime-bundled ICD once it explicitly identifies as our bridge.
++                preferred = new String[]{"droiddeck-mali-bridge", "mali-bridge"};
++                break;
++            case ADRENO_KGSL:
+                 preferred = new String[]{"freedreno", "turnip"};
+                 break;
+             default:
+@@ -220,7 +225,11 @@
+             }
+         }
+         bindGpuNode(context, cmd);
+-        bindAdrenoStats(cmd);
++        if (DeviceSupport.guestGpuBackend() == DeviceSupport.GuestGpuBackend.ADRENO_KGSL) {
++            bindAdrenoStats(cmd);
++        } else if (DeviceSupport.family() == DeviceSupport.GpuFamily.MALI) {
++            bindMaliStats(cmd);
++        }
+         bindCpuTemps(cmd, root);
+         if (extraBinds != null) {
+             for (String spec : extraBinds) bind(cmd, spec);
+@@ -230,14 +239,34 @@
+     }
+ 
+     /**
+-     * An app process may not open {@code /dev/dri} - the nodes exist but are labelled
+-     * {@code graphics_device}, which stock policy grants surfaceflinger and not us - yet libdrm and
+-     * everything built on it identify a GPU by its render node, and gamescope refuses to offer
+-     * linux-dmabuf without one. The KGSL device Turnip actually drives ({@code gpu_device}, which we
+-     * may open) stands in: it appears as a render node with the sysfs entries libdrm reads, and our
+-     * Turnip build reports the same device numbers for it.
++     * Present the GPU node expected by the selected guest backend.
++     *
++     * <p>Adreno keeps the upstream KGSL-as-render-node compatibility shim. Mali must never use
++     * that shim: PanVK consumes a real DRM render node, while stock proprietary Mali exposes
++     * /dev/mali0 and needs the separate DroidDeck Mali bridge.
+      */
+     private static void bindGpuNode(Context context, List<String> cmd) {
++        DeviceSupport.GuestGpuBackend backend = DeviceSupport.guestGpuBackend();
++        if (backend == DeviceSupport.GuestGpuBackend.ADRENO_KGSL) {
++            bindKgslAsDrm(context, cmd);
++            return;
++        }
++        if (backend == DeviceSupport.GuestGpuBackend.MALI_DRM) {
++            String render = DeviceSupport.usableDrmRenderNode();
++            if (render != null) {
++                // /dev is already bound wholesale. This explicit bind documents and preserves the
++                // selected render node if the proot /dev layout changes later.
++                bind(cmd, render + ":" + render);
++            }
++            return;
++        }
++        if (backend == DeviceSupport.GuestGpuBackend.MALI_PROPRIETARY) {
++            File mali = new File("/dev/mali0");
++            if (mali.exists()) bind(cmd, "/dev/mali0:/dev/mali0");
++        }
++    }
++
++    private static void bindKgslAsDrm(Context context, List<String> cmd) {
+         StructStat st;
+         try {
+             st = Os.stat(KGSL_DEVICE);
+@@ -253,18 +282,14 @@
+         File device = new File(base, "sys/" + major + ":" + minor + "/device");
+         File drm = new File(device, "drm/" + node);
+         try {
+-            if ((!dri.isDirectory() && !dri.mkdirs()) || (!drm.isDirectory() && !drm.mkdirs())) {
+-                return;
+-            }
++            if ((!dri.isDirectory() && !dri.mkdirs()) || (!drm.isDirectory() && !drm.mkdirs())) return;
+             new File(dri, node).createNewFile();
+             Files.write(new File(drm, "dev").toPath(),
+                     (major + ":" + minor + "\n").getBytes(StandardCharsets.UTF_8));
+             Files.write(new File(device, "uevent").toPath(),
+                     "DRIVER=kgsl-3d0\nMODALIAS=platform:kgsl-3d0\n".getBytes(StandardCharsets.UTF_8));
+             File subsystem = new File(device, "subsystem");
+-            if (!Files.isSymbolicLink(subsystem.toPath())) {
+-                Os.symlink("/sys/bus/platform", subsystem.getPath());
+-            }
++            if (!Files.isSymbolicLink(subsystem.toPath())) Os.symlink("/sys/bus/platform", subsystem.getPath());
+         } catch (IOException | ErrnoException e) {
+             return;
+         }
+@@ -297,6 +322,25 @@
+         }
+     }
+ 
++    /** Best-effort Mali telemetry. Kernel/OEM names vary, so never make session startup depend on it. */
++    private static void bindMaliStats(List<String> cmd) {
++        String gpuTemp = thermalZone("gpu");
++        String freq = firstReadable(
++                "/sys/class/devfreq/gpu/cur_freq",
++                "/sys/class/misc/mali0/device/devfreq/devfreq0/cur_freq",
++                "/sys/devices/platform/gpu/devfreq/gpu/cur_freq");
++        String load = firstReadable(
++                "/sys/class/devfreq/gpu/load",
++                "/sys/class/misc/mali0/device/utilization");
++        String[][] stats = {
++                {load, "/sys/kernel/debug/dri/0/perf_now"},
++                {freq, "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu/cur_freq"},
++                {gpuTemp, "/sys/class/thermal/thermal_zone28/temp"},
++                {gpuTemp, "/sys/class/thermal/thermal_zone26/temp"},
++        };
++        for (String[] stat : stats) if (stat[0] != null) bind(cmd, stat[0] + ":" + stat[1]);
++    }
++
+     /**
+      * mangoapp's CPU temperature is the mean of the thermal zones named cpuN-thermal or
+      * cpuN-top-thermal, as mainline kernels name them; Android kernels name the same sensors
+diff -ruN stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt
+--- stage1_base/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt	2026-09-30 02:11:31.000000000 +0000
++++ droiddeck_work/DroidDeck-main/app/src/main/java/com/droiddeck/launcher/session/SessionService.kt	2026-09-30 13:47:05.459493065 +0000
+@@ -505,12 +505,14 @@
+         guest.add("LIBGL_KOPPER_DRI2=true")
+         guest.add("BL_GPU_FAMILY=" + DeviceSupport.family().name.lowercase())
+         guest.add("BL_HOST_VULKAN=" + DeviceSupport.hostVulkanBackend().name.lowercase())
++        guest.add("BL_GUEST_GPU=" + DeviceSupport.guestGpuBackend().name.lowercase())
++        DeviceSupport.usableDrmRenderNode()?.let { guest.add("BL_DRM_RENDER_NODE=$it") }
+         val runtimeIcd = LinuxRuntime.vulkanIcd(this)
+         if (runtimeIcd != null) {
+             guest.add("VK_ICD_FILENAMES=" + runtimeIcd.path)
+         } else if (DeviceSupport.mali()) {
+-            // Do not let the Vulkan loader auto-scan the upstream runtime's Freedreno manifest on
+-            // Mali. An imported PanVK/Mali ICD below can replace this sentinel in the session script.
++            // Never let the loader auto-scan Freedreno on Mali. Imported drivers may replace this
++            // later, but the session diagnostics retain the exact guest ABI through BL_GUEST_GPU.
+             val noDriver = "/nonexistent/droiddeck-mali-no-matching-icd.json"
+             guest.add("VK_DRIVER_FILES=$noDriver")
+             guest.add("VK_ICD_FILENAMES=$noDriver")
+diff -ruN stage1_base/DroidDeck-main/docs/MALI_PORT.md droiddeck_work/DroidDeck-main/docs/MALI_PORT.md
+--- stage1_base/DroidDeck-main/docs/MALI_PORT.md	2026-09-30 02:20:07.000000000 +0000
++++ droiddeck_work/DroidDeck-main/docs/MALI_PORT.md	2026-09-30 13:49:07.287100533 +0000
+@@ -58,7 +58,7 @@
+ implementation and preserve zero-copy presentation through the already existing AHardwareBuffer /
+ `banner_ahb_v1` / SurfaceControl path.
+ 
+-Candidate implementation directions to evaluate in Stage 2 are:
++Candidate implementation directions for the bridge stage are:
+ 
+ 1. a Vulkan command/handle bridge between a guest ICD and an Android host service;
+ 2. a Venus/virtio-style userspace transport if it can be integrated without requiring a privileged
+@@ -85,3 +85,47 @@
+ A full Android/NDK Gradle build was attempted, but this working environment does not contain the
+ Gradle 8.10.2 distribution and cannot download it. The current build-validation gap is therefore
+ an environment limitation, not a reported compiler result.
++
++## Stage 2 — guest GPU ABI split (implemented)
++
++Stage 2 stops treating every Mali device as if the same Linux Vulkan driver could drive it.
++
++### Runtime backend selection
++
++`DeviceSupport.GuestGpuBackend` now reports one of:
++
++- `ADRENO_KGSL`: upstream Qualcomm path. The KGSL compatibility render node is created only here.
++- `MALI_DRM`: a real `/dev/dri/renderD*` exists and can actually be opened by the app. This is the
++  path on which a glibc PanVK/Panfrost ICD is meaningful.
++- `MALI_PROPRIETARY`: stock Mali exposes `/dev/mali0` but no accessible DRM render node. This path
++  is reserved for the DroidDeck Mali bridge and never fabricates a KGSL-style DRM node.
++- `NONE`: no guest GPU interface available to the app.
++
++The DRM probe opens candidates with `O_RDWR`; merely seeing a node through Android's `/dev` bind is
++not considered sufficient, because SELinux frequently allows stat/list while denying actual use.
++
++### ICD selection and compatibility
++
++- PanVK/Panfrost runtime ICDs are selected automatically only for `MALI_DRM`.
++- Stock `MALI_PROPRIETARY` only auto-selects manifests explicitly named as a DroidDeck Mali bridge.
++- Freedreno/Turnip remains tied to `ADRENO_KGSL`.
++- Imported driver metadata can declare `guestBackend` as `adreno-kgsl`, `mali-drm`, or
++  `mali-proprietary`/`mali-bridge`.
++- Known PanVK/Panfrost imports are refused on `/dev/mali0` phones, and known Turnip/Freedreno imports
++  are refused on Mali. This turns a likely black screen into an explicit compatibility decision.
++
++### Session and diagnostics
++
++Sessions now receive `BL_GUEST_GPU` and, when available, `BL_DRM_RENDER_NODE`. The session log states
++whether the missing component is a PanVK ICD or the proprietary Mali bridge. Device reports include
++the host Vulkan backend, guest GPU backend, and the render node that was actually openable.
++
++Mali telemetry is also best-effort mapped into the existing performance-overlay paths without
++making startup depend on OEM-specific sysfs files.
++
++### Next implementation target
++
++For ordinary unrooted Mali phones the remaining target is `MALI_PROPRIETARY`: implement a guest
++Vulkan ICD whose transport reaches a host-side Android Vulkan service, rather than trying to load a
++bionic vendor HAL into glibc or pretending `/dev/mali0` is DRM. The existing AHardwareBuffer /
++SurfaceControl path should remain the presentation endpoint so the bridge can avoid a CPU readback.
+diff -ruN stage1_base/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session droiddeck_work/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session
+--- stage1_base/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session	2026-09-30 02:19:34.000000000 +0000
++++ droiddeck_work/DroidDeck-main/tools/linuxfs/overlay/usr/local/bin/bannerlator-session	2026-09-30 13:47:05.460796999 +0000
+@@ -77,9 +77,22 @@
+   fi
+   unset bl_icd_lib bl_icd_dir
+ fi
+-if [ "${BL_GPU_FAMILY:-}" = "mali" ] && [ "${VK_ICD_FILENAMES:-}" = "/nonexistent/droiddeck-mali-no-matching-icd.json" ]; then
+-  echo "== vulkan driver: Mali host detected but no matching guest ICD is installed"
+-  echo "== vulkan driver: stock /dev/mali0 devices need the Mali bridge; PanVK requires a Panfrost/Panthor DRM node"
++if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
++  echo "== mali backend: ${BL_GUEST_GPU:-unknown}${BL_DRM_RENDER_NODE:+ render=$BL_DRM_RENDER_NODE}"
++  if [ "${VK_ICD_FILENAMES:-}" = "/nonexistent/droiddeck-mali-no-matching-icd.json" ]; then
++    case ${BL_GUEST_GPU:-unknown} in
++      mali_drm)
++        echo "== vulkan driver: Mali DRM is accessible but no PanVK/Panfrost ICD is installed"
++        ;;
++      mali_proprietary)
++        echo "== vulkan driver: stock /dev/mali0 detected; DroidDeck Mali bridge ICD is required"
++        echo "== vulkan driver: PanVK is intentionally NOT auto-selected for the proprietary Mali kernel ABI"
++        ;;
++      *)
++        echo "== vulkan driver: Mali detected but no usable guest GPU interface was found"
++        ;;
++    esac
++  fi
+ fi
+ # The app's gamescope build (tools/gamescope) takes realtime-priority Vulkan queues on this
+ # switch instead of on CAP_SYS_NICE, which proot never has; it falls back to normal priority
