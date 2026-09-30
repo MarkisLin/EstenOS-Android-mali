@@ -55,4 +55,4 @@ jobs:
       - name: Summary
         run: |
           echo "Stage 7 reconstructed from Droid-Deck/DroidDeck@6ecd6fa1d0cd293d3e55a0c7a7c71e9cde251c4f." >> "$GITHUB_STEP_SUMMARY"
-          echo "Stage patches 1 through 7 were applied in order and committed to main." >> "$GITHUB_STEP_SUMMARY"
+          echo "Stage patches 1 through 7 were applied in order, with patch boundaries preserved, and committed to main." >> "$GITHUB_STEP_SUMMARY"
