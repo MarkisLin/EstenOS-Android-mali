@@ -57,7 +57,11 @@ jobs:
           rm -f gradle/wrapper/gradle-wrapper.jar
 
           cd "$ROOT"
-          rsync -a --delete --exclude='.git/' "$RUNNER_TEMP/upstream/" "$ROOT/"
+          # GitHub's Actions token cannot create/update workflow files in this repository.
+          # Preserve the bootstrap workflow here; ChatGPT's GitHub connection installs the
+          # Stage 7 workflow set after this source-tree push succeeds.
+          rsync -a --delete --exclude='.git/' --exclude='.github/workflows/' \
+            "$RUNNER_TEMP/upstream/" "$ROOT/"
 
           git config user.name "EstenOS Mali Bootstrap"
           git config user.email "actions@users.noreply.github.com"
