@@ -650,9 +650,14 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     /** Reports one package's download on the loading screen: "<what> · 332 of 791 MB", checking, unpacking. */
     private fun progressFor(what: String, mb: Long) = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.ProgressListener { stage, p ->
         val message = when {
-            stage.startsWith("Descargando") -> if (p >= 0 && mb > 0) "descargando $what · ${p * mb / 100} de $mb MB" else "descargando $what"
-            stage.startsWith("Comprobando") -> "comprobando $what"
-            else -> "descomprimiendo $what"
+            stage.startsWith("Descargando") -> if (p >= 0 && mb > 0) "Descargando $what · ${p * mb / 100} de $mb MB" else "Descargando $what"
+            stage.startsWith("Conectando") -> "Conectando para $what…"
+            stage.startsWith("Buscando") -> stage
+            stage.startsWith("Comprobando") || stage.startsWith("Verificando") -> "Verificando $what…"
+            stage.startsWith("Registrando") -> "Registrando $what en Steam…"
+            stage.startsWith("Instalando") -> "Instalando $what…"
+            stage.startsWith("Descomprimiendo") -> "Descomprimiendo $what…"
+            else -> stage
         }
         com.droiddeck.launcher.runtime.BootstrapInstallService.update(applicationContext, message, p)
         uiHandler.post {
@@ -686,7 +691,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     /** Null cuando el seed ARM64 de Proton está listo; un fallo no impide abrir Steam. */
     private fun installProton(): String? {
-        uiHandler.post { loading.percent = -1; loading.step = "descargando Proton Experimental (ARM64)" }
+        uiHandler.post { loading.percent = -1; loading.step = "Buscando Proton ARM64 compatible…" }
+        com.droiddeck.launcher.runtime.BootstrapInstallService.update(applicationContext, "Buscando Proton ARM64 compatible…", -1)
         val entry = com.droiddeck.launcher.runtime.SteamSeedCatalog.fetch()?.firstOrNull()
             ?: return "No se pudo acceder al bootstrap de Steam"
         return com.droiddeck.launcher.runtime.SteamSeedCatalog.install(
