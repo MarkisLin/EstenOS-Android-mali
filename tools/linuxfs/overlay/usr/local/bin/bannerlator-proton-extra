@@ -46,6 +46,12 @@ def log(*args):
     print("bannerlator-proton-extra:", *args, flush=True)
 
 
+def progress(stage, percent=-1):
+    # Machine-readable line consumed by the Android UI. Keep it on stdout beside regular logs so
+    # old runtimes still show useful text while newer builds get a real multi-stage progress bar.
+    print("BL_PROGRESS\t%s\t%d" % (stage, percent), flush=True)
+
+
 def fetch_json(url):
     req = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
@@ -115,10 +121,34 @@ def verify(path, sums_url):
 
 def extract(tarball, into):
     os.makedirs(into, exist_ok=True)
-    log("unpacking (a few minutes; nothing is shown while tar runs)")
-    rc = subprocess.call(["tar", "-xf", tarball, "-C", into])
+    progress("Analizando el paquete de Proton…", -1)
+    try:
+        listing = subprocess.check_output(
+            ["tar", "-tf", tarball], stderr=subprocess.STDOUT, text=True)
+        total = max(1, len(listing.splitlines()))
+    except (OSError, subprocess.CalledProcessError):
+        total = 0
+
+    log("unpacking Proton archive")
+    progress("Descomprimiendo archivos de Proton…", 0 if total else -1)
+    proc = subprocess.Popen(
+        ["tar", "-xvf", tarball, "-C", into],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1)
+    done = 0
+    last_pct = -1
+    if proc.stdout is not None:
+        for _line in proc.stdout:
+            done += 1
+            if total:
+                pct = min(99, int(done * 100 / total))
+                if pct != last_pct:
+                    last_pct = pct
+                    progress("Descomprimiendo archivos de Proton…", pct)
+    rc = proc.wait()
     if rc != 0:
         raise SystemExit("bannerlator-proton-extra: tar failed (%d)" % rc)
+    progress("Descomprimiendo archivos de Proton…", 100)
     # A Proton tarball holds one top-level directory. Take whichever entry has the entry point so a
     # stray ._ file or a nested layout does not decide it.
     entries = [e for e in sorted(os.listdir(into)) if not e.startswith(".")]
@@ -207,10 +237,12 @@ def main():
     else:
         shutil.rmtree(staging, ignore_errors=True)
     log("installed %s" % name)
+    progress("Registrando Proton en Steam…", -1)
 
     # Patches out require_tool_appid and wraps the entry point, which is what makes it launchable
     # here. Doing it now means the client picks the tool up on its next restart with no extra step.
     subprocess.call(["bannerlator-steam-compat", steam_root])
+    progress("Proton listo para usar", 100)
 
 
 if __name__ == "__main__":
