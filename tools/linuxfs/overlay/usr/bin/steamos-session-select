@@ -1,0 +1,5 @@
+#!/bin/sh
+# DroidDeck Mali-first es Steam-only. Steam puede invocar este helper desde su menú de energía,
+# pero no existe un frontend/escritorio alternativo en esta edición.
+echo "steamos-session-select: modo Steam-only; cambio de sesión ignorado ($*)" >&2
+exit 0

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DroidDeck</string>
+    <string-array name="loading_hints">
+        <item>La primera ejecución descarga Steam. Puede tardar unos minutos.</item>
+        <item>De forma predeterminada, al salir de la aplicación Steam se pausa y continúa donde estaba al volver.</item>
+        <item>Tu mando aparece como un control de Xbox 360. Si no tienes uno, usa los controles en pantalla.</item>
+    </string-array>
+    <string name="session_channel">Sesión</string>
+    <string name="session_channel_description">Se muestra mientras hay una sesión de Steam abierta</string>
+    <string name="session_notification">Steam está en ejecución</string>
+    <string name="session_notification_paused">Sesión pausada: pulsa Reanudar cuando quieras continuar</string>
+    <string name="resume_session">Reanudar</string>
+    <string name="stop_session">Detener sesión</string>
+    <string name="frame_gen_title">Generación de fotogramas</string>
+    <string name="added_games_import_hint">Elige juegos de Windows con una subcarpeta por juego. Steam comprueba la propiedad al iniciar sesión. Los juegos confirmados usan su entrada de la biblioteca de Steam tras reiniciar Steam; los demás quedan como accesos directos externos a Steam. Steam puede verificar o descargar archivos de los juegos importados.</string>
+    <string name="second_library_import_hint">Añade una biblioteca de Steam y analiza las carpetas de juegos de Windows aquí y en steamapps/common. Tras comprobar la propiedad y reiniciar Steam, los juegos propios usan entradas de Steam; los demás usan accesos directos externos a Steam.</string>
+    <string name="added_games_forget_hint">Olvidar elimina los accesos directos externos a Steam en la próxima sesión. Administra las instalaciones de Steam desde Steam. Los archivos permanecen en el disco.</string>
+    <string name="game_env_title">Entorno del juego</string>
+    <string name="game_env_hint">Valores compartidos y ajustes por juego para títulos que usan Proton. Se aplica en el próximo inicio del juego.</string>
+    <string name="game_env_edit">Editar variables</string>
+    <string name="game_env_shared">Todos los juegos con Proton</string>
+    <string name="game_env_scope">Perfil del juego</string>
+    <string name="game_env_app_id">ID de aplicación de Steam o ID de compatibilidad externo a Steam</string>
+    <string name="game_env_open">Abrir perfil</string>
+    <string name="game_env_profile">Juego %1$s</string>
+    <string name="game_env_add">Añadir variable</string>
+    <string name="game_env_name">Nombre de variable</string>
+    <string name="game_env_value">Valor</string>
+    <string name="game_env_save">Guardar</string>
+    <string name="game_env_cancel">Cancelar</string>
+    <string name="game_env_close">Cerrar</string>
+    <string name="game_env_remove">Eliminar</string>
+    <string name="game_env_restore">Restaurar ajustes heredados</string>
+    <string name="game_env_reset">Restablecer este perfil</string>
+    <string name="game_env_unset">No definir en este perfil</string>
+    <string name="game_env_empty">No hay variables definidas. Se usan los valores predeterminados del controlador y Proton.</string>
+    <string name="game_env_inherited">Heredado</string>
+    <string name="game_env_custom">Variable personalizada</string>
+    <string name="game_env_defaults">El nivel de funciones D3D12 usa 12_2 y el modelo de shaders 6_9 de forma predeterminada. Ambos pueden cambiarse o quitarse por juego.</string>
+    <string name="game_env_error">No se pudieron cargar o aplicar los ajustes. Revisa el almacenamiento disponible e inténtalo de nuevo.</string>
+    <string name="game_env_invalid">Usa un nombre de variable válido y un valor sin caracteres NUL (hasta 8192 caracteres).</string>
+    <string name="game_env_unused">El entorno Proton estándar de Linux no usa esta variable; puede requerir un componente personalizado.</string>
+    <string name="game_env_loading">Cargando…</string>
+    <string name="game_env_overrides">Los ajustes de este perfil sustituyen los ajustes compartidos y las variables equivalentes de las opciones de inicio de Steam. Eliminar deja una variable sin definir; Restaurar usa su valor heredado.</string>
+    <string name="game_env_feature">Sustitución del nivel de funciones D3D12. 12_2 declara capacidades DirectX 12 Ultimate; las funciones no compatibles pueden fallar. Déjalo sin definir para detección automática.</string>
+    <string name="game_env_shader">Sustitución del modelo de shaders D3D12. 6_9 requiere un VKD3D suficientemente reciente y funciones de GPU compatibles. Déjalo sin definir para detección automática.</string>
+    <string name="game_env_cache">Mantén activa la caché de shaders de Mesa para reducir compilaciones repetidas. false activa la caché.</string>
+    <string name="game_env_cache_size">Tamaño máximo de la caché de shaders de Mesa, por ejemplo 1G. Una caché mayor usa más almacenamiento.</string>
+    <string name="game_env_vkd3d_config">Opciones de VKD3D para D3D12. nodxr desactiva ray tracing; úsalo solo con juegos que lo necesiten.</string>
+    <string name="game_env_proton_log">Pon 1 para generar un registro de diagnóstico de Proton. Los registros pueden reducir el rendimiento y usar almacenamiento.</string>
+    <string name="game_env_wined3d">Pon 1 para usar WineD3D basado en OpenGL en lugar de DXVK al probar compatibilidad D3D9–11.</string>
+    <string name="game_env_xalia">Pon 0 para desactivar el ayudante de navegación con control de Proton para este juego.</string>
+    <string name="game_env_hud">Superposición de DXVK para D3D9–11. fps muestra la tasa de fotogramas; sin definir lo oculta.</string>
+    <string name="game_env_dxvk_config">Ajustes de DXVK separados por punto y coma. Las versiones recientes usan dxvk.maxFrameRate para limitar FPS; para uso normal es preferible el limitador de la sesión.</string>
+    <string name="game_env_vkd3d_limit">Límite de fotogramas para D3D12. 0 desactiva el límite.</string>
+    <string name="game_env_glthread">Ejecución en hilos de Mesa OpenGL. true puede ayudar a juegos OpenGL limitados por CPU; prueba por juego.</string>
+    <string name="fex_preset_title">Perfil FEX</string>
+    <string name="fex_next_launch">Se aplica en el próximo inicio del juego.</string>
+    <string name="game_settings_title">Juegos</string>
+    <string name="fex_default_label">Valores predeterminados de FEX</string>
+    <string name="fex_default_detail">Usa los valores predeterminados de FEX.</string>
+    <string name="fex_stability_label">Estabilidad</string>
+    <string name="fex_stability_detail">Ajustes más seguros y más lentos.</string>
+    <string name="fex_compatibility_label">Compatibilidad</string>
+    <string name="fex_compatibility_detail">TSO completo con multibloque.</string>
+    <string name="fex_intermediate_label">Intermedio</string>
+    <string name="fex_intermediate_detail">TSO equilibrado con precisión x87 reducida.</string>
+    <string name="fex_performance_label">Rendimiento</string>
+    <string name="fex_performance_detail">Todo TSO desactivado; multibloque.</string>
+    <string name="fex_performance_tso_label">Rendimiento + TSO</string>
+    <string name="fex_performance_tso_detail">Ajustes de Rendimiento con TSO principal activado.</string>
+    <string name="fex_extreme_label">Extremo</string>
+    <string name="fex_extreme_detail">Desactiva comprobaciones de código automodificable. Juegos JIT y DRM pueden fallar.</string>
+    <string name="fex_extreme_tso_label">Extremo + TSO</string>
+    <string name="fex_extreme_tso_detail">Ajustes Extremos con TSO principal activado.</string>
+    <string name="fex_extreme_gn_label">Extremo-gn</string>
+    <string name="fex_extreme_gn_detail">Rendimiento con TSC y sugerencias de metadatos. Pruébalo antes de Extremo.</string>
+    <string name="fex_denuvo_label">Denuvo</string>
+    <string name="fex_denuvo_detail">Rendimiento con comprobaciones completas de código y el bit del hipervisor oculto.</string>
+    <string name="game_env_custom_value">Valor personalizado</string>
+    <string name="game_env_select_value">Seleccionar valor</string>
+</resources>

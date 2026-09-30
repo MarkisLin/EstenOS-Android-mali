@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "g52-v7-jm",
+  "gpu": "Mali-G52 r1",
+  "panArch": 7,
+  "guestBackend": "mali-kbase",
+  "frontend": "jm",
+  "uapiMajor": 11,
+  "minUapiMinor": 38,
+  "maxUapiMinor": 38,
+  "productIds": ["0x7402"],
+  "referenceDevice": "Mali-G52 r1 MC2 / MediaTek MT6768",
+  "releaseSource": "LukeValen/panvk-mali-g52",
+  "maturity": "public-experimental",
+  "autoDownload": false,
+  "notes": "Perfil experimental JM. GPU ID público 0x74021000 -> Product ID 0x7402; Kbase UAPI 11.38. El trabajo público valida WSI y DXVK básico, pero varias capacidades siguen experimentales; no tratar como compatibilidad universal."
+}

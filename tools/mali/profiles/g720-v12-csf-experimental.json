@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "g720-v12-csf",
+  "gpu": "Mali-G720",
+  "panArch": 12,
+  "guestBackend": "mali-kbase",
+  "frontend": "csf",
+  "uapiMajor": 1,
+  "minUapiMinor": 30,
+  "maxUapiMinor": 30,
+  "productIds": ["0xc870"],
+  "referenceDevice": "Mali-G720 MC8 / MediaTek MT6899",
+  "releaseSource": "wonderkast02/panvk-g720-kbase-csf",
+  "maturity": "public-experimental",
+  "autoDownload": false,
+  "notes": "Perfil experimental de hardware de referencia. GPU ID público 0xc8700010 -> Product ID 0xc870; Kbase/CSF UAPI 1.30. No implica compatibilidad universal ni convierte el ZIP Android público en un ICD glibc para DroidDeck."
+}

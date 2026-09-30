@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "g615-v11-csf",
+  "gpu": "Mali-G615",
+  "panArch": 11,
+  "guestBackend": "mali-kbase",
+  "frontend": "csf",
+  "uapiMajor": 1,
+  "minUapiMinor": 21,
+  "maxUapiMinor": 21,
+  "productIds": ["0xb8a3"],
+  "referenceDevice": "Poco X6 Pro / Dimensity 8300-Ultra",
+  "releaseSource": "zenithblue-oss/panvk-kbase-android",
+  "notes": "Qualified Stage-4 profile. Match the live Kbase probe before loading the ICD; do not generalize this binary to other Mali GPUs."
+}

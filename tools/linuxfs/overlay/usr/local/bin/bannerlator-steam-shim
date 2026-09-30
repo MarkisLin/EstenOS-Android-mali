@@ -1,0 +1,5 @@
+#!/bin/bash
+# Compatibilidad con launchers de Steam dentro del runtime. En la edición Mali-first no existe
+# un escritorio Linux hospedado: toda invocación se entrega directamente al cliente Steam ARM64.
+set -u
+exec "${HOME:-/root}/.local/share/Steam/steamrtarm64/steam" "$@"
