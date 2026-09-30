@@ -3,7 +3,9 @@ package com.droiddeck.launcher.gpu
 import android.content.Context
 import android.net.Uri
 import com.droiddeck.launcher.core.DeviceSupport
+import com.droiddeck.launcher.core.Downloader
 import com.droiddeck.launcher.core.FileUtils
+import com.droiddeck.launcher.core.Hashes
 import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.session.SessionService
 import java.io.IOException
@@ -41,11 +43,12 @@ object MaliDriverBootstrap {
         if (SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM).isNotEmpty()) return false
 
         val id = LinuxVulkanDriver.automaticDriverId(context)
-        if (id.isEmpty() || !TurnipReleases.isDownloaded(context, id)) return false
+        if (id.isEmpty()) return false
 
         val manager = LinuxVulkanDriverManager(context)
+        if (!manager.isAutoManagedTrustedMaliDriver(id)) return false
         manager.removeDriver(id)
-        TurnipReleases.forget(context, id)
+        if (TurnipReleases.isDownloaded(context, id)) TurnipReleases.forget(context, id)
         android.util.Log.w("MaliDriverBootstrap", "removed auto-managed Mali ICD $id after preflight exit $exitCode; one clean reinstall is allowed")
         return true
     }
@@ -76,6 +79,13 @@ object MaliDriverBootstrap {
             ?: throw IOException("${MaliKbaseProfiles.readiness(probe)}. Todavía no hay un controlador automático calificado para este teléfono.")
         if (!profile.glibcReleaseIntegrated) {
             throw IOException("${profile.displayGpu} está reconocida, pero su controlador PanVK-Kbase glibc todavía es experimental y no se instala automáticamente.")
+        }
+
+        // Valhall v9/JM uses a different kernel frontend from modern CSF devices. Use the one
+        // immutable G57 glibc package validated for PRoot, verify its SHA-256 locally, then let the
+        // existing ldd/vulkaninfo/Zink/gamescope preflight decide whether this exact phone is safe.
+        if (MaliKbaseProfiles.isPinnedG57(profile)) {
+            return ensurePinnedG57(context, manager, profile, progress)
         }
 
         progress("Buscando el controlador Mali correcto…", -1)
@@ -110,6 +120,53 @@ object MaliDriverBootstrap {
             return id
         } finally {
             archive?.let { FileUtils.delete(it) }
+        }
+    }
+
+    @Throws(IOException::class, IllegalArgumentException::class)
+    private fun ensurePinnedG57(
+        context: Context,
+        manager: LinuxVulkanDriverManager,
+        profile: MaliKbaseProfiles.Profile,
+        progress: (stage: String, percent: Int) -> Unit,
+    ): String {
+        val archive = java.io.File(context.cacheDir, "panvk-g57-v1.0.0-glibc-async.zip")
+        try {
+            progress("Descargando ${profile.displayGpu} / PanVK JM…", 0)
+            val ok = Downloader.downloadFile(
+                MaliKbaseProfiles.G57_RELEASE_URL,
+                archive,
+                true,
+            ) { fraction ->
+                val pct = if (fraction == null || fraction < 0f) -1
+                else (fraction * 100f).toInt().coerceIn(0, 100)
+                progress("Descargando ${profile.displayGpu} / PanVK JM…", pct)
+            }
+            if (!ok || !archive.isFile) {
+                throw IOException("No se pudo descargar el controlador experimental Mali-G57 JM.")
+            }
+
+            progress("Verificando SHA-256 del controlador Mali-G57…", -1)
+            val actual = Hashes.sha256(archive)
+            if (!actual.equals(MaliKbaseProfiles.G57_RELEASE_SHA256, ignoreCase = true)) {
+                FileUtils.delete(archive)
+                throw IOException("La descarga Mali-G57 no pasó la verificación SHA-256.")
+            }
+
+            progress("Instalando PanVK Mali-G57 JM (glibc)…", -1)
+            val id = manager.installReleaseDriver(
+                Uri.fromFile(archive),
+                "PanVK Mali-G57 JM glibc async",
+                MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL,
+                MaliKbaseProfiles.G57_RELEASE_TAG,
+            )
+            manager.compatibilityIssue(id)?.let { issue ->
+                manager.removeDriver(id)
+                throw IOException("El controlador Mali-G57 descargado no coincide con este teléfono: $issue")
+            }
+            return id
+        } finally {
+            FileUtils.delete(archive)
         }
     }
 }
