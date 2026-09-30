@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.net.wifi.WifiManager
 import com.droiddeck.launcher.MainActivity
 import com.droiddeck.launcher.R
 
@@ -24,6 +25,7 @@ import com.droiddeck.launcher.R
  */
 class RuntimeInstallService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -36,11 +38,26 @@ class RuntimeInstallService : Service() {
             setReferenceCounted(false)
             acquire()
         }
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wifi?.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "DroidDeck:runtime-install-wifi",
+            )?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Throwable) {
+            wifiLock = null
+        }
     }
 
     override fun onDestroy() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        try { wifiLock?.let { if (it.isHeld) it.release() } } catch (_: Throwable) {}
+        wifiLock = null
         super.onDestroy()
     }
 
