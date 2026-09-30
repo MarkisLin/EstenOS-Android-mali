@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.droiddeck.launcher.session.ProtonExtras
+import com.droiddeck.launcher.runtime.BootstrapInstallService
 import com.droiddeck.launcher.ui.ProtonRow
 import com.droiddeck.launcher.session.SessionState
 
@@ -24,18 +25,24 @@ internal class ProtonMenu(private val activity: android.app.Activity, private va
         if (protonBusyId != null || SessionState.running) return
         ProtonExtras.unqueue(activity, tool)
         protonBusyId = id
-        protonStage = "Iniciando…"
+        protonStage = "Preparando ${tool.name}…"
         protonPercent = -1
+        BootstrapInstallService.start(activity, protonStage ?: "Preparando ${tool.name}…", protonPercent)
         Thread({
-            val problem = ProtonExtras.install(activity, tool) { label, value ->
-                ui.post { protonStage = label; protonPercent = value }
-            }
-            ui.post {
-                protonBusyId = null
-                protonStage = null
-                protonPercent = -1
-                refreshProtons()
-                if (problem != null) android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show()
+            try {
+                val problem = ProtonExtras.install(activity.applicationContext, tool) { label, value ->
+                    BootstrapInstallService.update(activity.applicationContext, label, value)
+                    ui.post { protonStage = label; protonPercent = value }
+                }
+                ui.post {
+                    protonBusyId = null
+                    protonStage = null
+                    protonPercent = -1
+                    refreshProtons()
+                    if (problem != null) android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                BootstrapInstallService.stop(activity.applicationContext)
             }
         }, "install-proton-$id").start()
     }
