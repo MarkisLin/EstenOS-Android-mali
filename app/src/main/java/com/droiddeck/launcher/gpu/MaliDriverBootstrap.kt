@@ -23,9 +23,16 @@ object MaliDriverBootstrap {
         val manager = LinuxVulkanDriverManager(context)
         val chosen = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
         if (chosen.isNotEmpty()) {
-            // A valid explicit choice is authoritative. A stale/missing/incompatible one must pass
-            // through ensure() so it can be cleared before an automatic driver is resolved.
-            return !manager.isInstalled(chosen) || manager.compatibilityIssue(chosen) != null
+            // Manual choices remain authoritative. Packages installed by EstenOS itself are
+            // different: an old G57 package must not pin this phone forever just because an older
+            // build happened to persist its id as an explicit choice.
+            if (!manager.isInstalled(chosen) || manager.compatibilityIssue(chosen) != null) return true
+            val profile = MaliKbaseProfiles.forDevice(MaliKbaseProbe.probe())
+            if (MaliKbaseProfiles.isPinnedG57(profile) && manager.isAutoManagedTrustedMaliDriver(chosen)) {
+                return !manager.isCurrentPinnedG57Driver(chosen) ||
+                    manager.getIcdApiVersion(chosen) != MaliKbaseProfiles.G57_ICD_API_VERSION
+            }
+            return false
         }
         val auto = LinuxVulkanDriver.automaticDriverId(context)
         if (auto.isEmpty()) return true
@@ -47,15 +54,16 @@ object MaliDriverBootstrap {
         if (exitCode !in setOf(78, 79, 82, 84, 85)) return false
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) return false
 
-        // An explicit driver choice belongs to the user even if it originally came from Downloads.
-        if (SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM).isNotEmpty()) return false
-
-        val id = LinuxVulkanDriver.automaticDriverId(context)
+        val manager = LinuxVulkanDriverManager(context)
+        val explicit = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
+        val id = if (explicit.isNotEmpty()) explicit else LinuxVulkanDriver.automaticDriverId(context)
         if (id.isEmpty()) return false
 
-        val manager = LinuxVulkanDriverManager(context)
+        // Never delete a genuinely manual import. A persisted id from our own immutable releases
+        // is safe to self-repair even when an older build stored it as an explicit selection.
         if (!manager.isAutoManagedTrustedMaliDriver(id)) return false
         manager.removeDriver(id)
+        if (explicit.isNotEmpty()) SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
         if (TurnipReleases.isDownloaded(context, id)) TurnipReleases.forget(context, id)
         android.util.Log.w("MaliDriverBootstrap", "removed auto-managed Mali ICD $id after preflight exit $exitCode; one clean reinstall is allowed")
         return true
@@ -74,17 +82,29 @@ object MaliDriverBootstrap {
         val selected = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
         if (selected.isNotEmpty()) {
             if (manager.isInstalled(selected) && manager.compatibilityIssue(selected) == null) {
-                if (manager.isCurrentPinnedG57Driver(selected)
-                    && manager.getIcdApiVersion(selected) != MaliKbaseProfiles.G57_ICD_API_VERSION
+                val selectedProfile = MaliKbaseProfiles.forDevice(MaliKbaseProbe.probe())
+                if (MaliKbaseProfiles.isPinnedG57(selectedProfile)
+                    && manager.isAutoManagedTrustedMaliDriver(selected)
                 ) {
-                    progress("Corrigiendo la versión Vulkan del controlador Mali-G57…", -1)
-                    if (!manager.setIcdApiVersion(selected, MaliKbaseProfiles.G57_ICD_API_VERSION)) {
-                        throw IOException("No se pudo corregir el manifiesto Vulkan del controlador Mali-G57.")
+                    if (manager.isCurrentPinnedG57Driver(selected)) {
+                        if (manager.getIcdApiVersion(selected) != MaliKbaseProfiles.G57_ICD_API_VERSION) {
+                            progress("Corrigiendo la versión Vulkan del controlador Mali-G57…", -1)
+                            if (!manager.setIcdApiVersion(selected, MaliKbaseProfiles.G57_ICD_API_VERSION)) {
+                                throw IOException("No se pudo corregir el manifiesto Vulkan del controlador Mali-G57.")
+                            }
+                        }
+                        return selected
                     }
+                    progress("Sustituyendo el controlador Mali-G57 anterior…", -1)
+                    manager.removeDriver(selected)
+                    if (TurnipReleases.isDownloaded(context, selected)) TurnipReleases.forget(context, selected)
+                    SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
+                } else {
+                    return selected
                 }
-                return selected
+            } else {
+                SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
             }
-            SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
         }
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) {
             throw IOException("Este dispositivo no usa el backend Mali Kbase integrado")
