@@ -163,6 +163,45 @@ public class LinuxVulkanDriverManager {
         return m != null ? m.optString("driverVersion", "") : "";
     }
 
+    /** API version currently advertised by the generated ICD manifest. */
+    public String getIcdApiVersion(String id) {
+        if (!isInstalled(id)) return "";
+        try {
+            String raw = FileUtils.readString(new File(getDriverDir(id), ICD_NAME));
+            if (raw == null || raw.isEmpty()) return "";
+            JSONObject root = new JSONObject(raw);
+            JSONObject body = root.optJSONObject("ICD");
+            return body != null ? body.optString("api_version", "") : "";
+        } catch (Exception e) {
+            Log.w(TAG, "could not read ICD api_version for " + id, e);
+            return "";
+        }
+    }
+
+    /**
+     * Repairs only the generated manifest. The driver binary and user choice are left untouched.
+     * Used for trusted packages whose older app builds wrote an overly conservative api_version.
+     */
+    public boolean setIcdApiVersion(String id, String apiVersion) {
+        if (!isInstalled(id) || apiVersion == null || apiVersion.isEmpty()) return false;
+        File manifest = new File(getDriverDir(id), ICD_NAME);
+        try {
+            String raw = FileUtils.readString(manifest);
+            if (raw == null || raw.isEmpty()) return false;
+            JSONObject root = new JSONObject(raw);
+            JSONObject body = root.optJSONObject("ICD");
+            if (body == null) return false;
+            if (apiVersion.equals(body.optString("api_version", ""))) return true;
+            body.put("api_version", apiVersion);
+            if (!FileUtils.writeString(manifest, root.toString(2))) return false;
+            Log.i(TAG, "updated ICD api_version for " + id + " -> " + apiVersion);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "could not update ICD api_version for " + id, e);
+            return false;
+        }
+    }
+
     /** True only for drivers installed from immutable release sources managed by Automatic. */
     public boolean isAutoManagedTrustedMaliDriver(String id) {
         JSONObject m = readMeta(id);
@@ -335,6 +374,9 @@ public class LinuxVulkanDriverManager {
             mergeTrustedMetadata(meta, trusted);
             if (!FileUtils.writeString(new File(getDriverDir(id), META_NAME), meta.toString(2)))
                 throw new IOException("no se pudieron guardar los metadatos confiables de la versión");
+            String trustedApi = trusted.optString("apiVersion", "");
+            if (!trustedApi.isEmpty() && !setIcdApiVersion(id, trustedApi))
+                throw new IOException("no se pudo actualizar api_version del manifiesto Vulkan");
             return id;
         } catch (IllegalArgumentException | IOException e) {
             removeDriver(id);
