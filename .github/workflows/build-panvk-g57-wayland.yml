@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           cd src
-          meson setup build-estenos             -Dbuildtype=release             -Dpanvk-use-kbase=true             -Dpanfrost-kmds=kbase             -Dvulkan-drivers=panfrost             -Dgallium-drivers=             -Dplatforms=x11,wayland             -Dglx=disabled             -Ddebug=false             -Dstrip=true             -Dbuild-tests=false             -Dtools=[]             -Dvideo-codecs=
+          meson setup build-estenos             -Dbuildtype=release             -Dpanvk-use-kbase=true             -Dvulkan-drivers=panfrost             -Dgallium-drivers=             -Dplatforms=x11,wayland             -Dglx=disabled             -Ddebug=false             -Dstrip=true             -Dbuild-tests=false             -Dtools=[]             -Dvideo-codecs=
 
       - name: Build PanVK
         run: |
@@ -62,7 +62,7 @@ jobs:
           source commit: 80d34bc8bfd551212b10308ca4dcbcc0eec15581
           platforms: x11,wayland
           vulkan driver: panfrost
-          kmd: kbase
+          runtime target: G57 / Kbase JM (binary keeps upstream multi-KMD link support)
           architecture: aarch64 glibc
           EOF
           (cd out && zip -9 ../panvk-g57-kbase-wayland-v1.zip libvulkan_panfrost.so BUILD.txt)
