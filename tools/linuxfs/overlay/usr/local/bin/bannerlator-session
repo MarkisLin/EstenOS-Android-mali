@@ -71,6 +71,12 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
     export VK_DRIVER_FILES="$BL_VK_DRIVER"
     # Loaders older than 1.3.207 only know the old name; both are harmless together.
     export VK_ICD_FILENAMES="$BL_VK_DRIVER"
+    if [ "${BL_GUEST_GPU:-}" = "mali_kbase" ]; then
+      # Keep loader diagnostics small but useful on the experimental Kbase path. DRIVER shows
+      # exactly which JSON/.so wins; ERROR/WARN exposes dlopen and negotiation failures.
+      export VK_LOADER_DEBUG="${VK_LOADER_DEBUG:-error,warn,driver}"
+      echo "== Vulkan ICD efectivo: $(tr -d '\n' < "$BL_VK_DRIVER" 2>/dev/null | head -c 900)"
+    fi
     # Generic Mesa/Mali ICD packages may carry helper .so files beside the selected ICD. Let the
     # glibc loader resolve those helpers from the imported package without copying them into /usr.
     bl_icd_dir=$(dirname "$bl_icd_lib")
