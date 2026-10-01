@@ -118,6 +118,11 @@ android {
         // fails a release build over it because Google Play will not accept an sdk that old -
         // true, and not something this app can trade away. Every other check stays on.
         disable 'ExpiredTargetSdkVersion'
+        // Compose's UnrememberedAnimatable detector bundled with the current Android Lint stack
+        // crashes on Kotlin 2.1 metadata ("maximum supported version is 2.0.0"). Keep every other
+        // lint check enabled and isolate only this broken upstream detector until the toolchain
+        // catches up.
+        disable 'UnrememberedAnimatable'
         // Compose 1.6.x ships a legacy lint detector that crashes against the Kotlin metadata
         // emitted by our newer Kotlin compiler. AndroidX removed this detector in 2025 in favour
         // of RememberInComposition. Disable only the obsolete detector; every other lint rule runs.
