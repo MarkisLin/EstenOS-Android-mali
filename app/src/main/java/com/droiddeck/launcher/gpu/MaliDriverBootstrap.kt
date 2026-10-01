@@ -32,7 +32,10 @@ object MaliDriverBootstrap {
         val profile = MaliKbaseProfiles.forDevice(MaliKbaseProbe.probe())
         return MaliKbaseProfiles.isPinnedG57(profile)
             && manager.isAutoManagedTrustedMaliDriver(auto)
-            && !manager.isCurrentPinnedG57Driver(auto)
+            && (
+                !manager.isCurrentPinnedG57Driver(auto) ||
+                    manager.getIcdApiVersion(auto) != MaliKbaseProfiles.G57_ICD_API_VERSION
+                )
     }
 
     /**
@@ -82,9 +85,21 @@ object MaliDriverBootstrap {
             ?: throw IOException("${MaliKbaseProfiles.readiness(probe)}. Todavía no hay un controlador automático calificado para este teléfono.")
 
         LinuxVulkanDriver.automaticDriverId(context).takeIf { it.isNotEmpty() }?.let { auto ->
-            if (!MaliKbaseProfiles.isPinnedG57(profile) || manager.isCurrentPinnedG57Driver(auto)) {
+            if (!MaliKbaseProfiles.isPinnedG57(profile)) return auto
+
+            if (manager.isCurrentPinnedG57Driver(auto)) {
+                // Stage 14 wrote this exact binary with the historical generic ICD default
+                // (Vulkan 1.1). Repair that small manifest in place: no 5 MB re-download and no
+                // user data loss are necessary.
+                if (manager.getIcdApiVersion(auto) != MaliKbaseProfiles.G57_ICD_API_VERSION) {
+                    progress("Corrigiendo la versión Vulkan del controlador Mali-G57…", -1)
+                    if (!manager.setIcdApiVersion(auto, MaliKbaseProfiles.G57_ICD_API_VERSION)) {
+                        throw IOException("No se pudo corregir el manifiesto Vulkan del controlador Mali-G57.")
+                    }
+                }
                 return auto
             }
+
             // Replace only our own obsolete G57 package. A manually imported compatible ICD remains
             // authoritative even when Automatic selected it.
             if (manager.isAutoManagedTrustedMaliDriver(auto)) {
