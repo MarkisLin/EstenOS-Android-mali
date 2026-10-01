@@ -77,6 +77,8 @@ jobs:
           sudo chroot /tmp/root /usr/bin/env \
             VK_DRIVER_FILES=/opt/estenos-g57/icd-11.json \
             VK_ICD_FILENAMES=/opt/estenos-g57/icd-11.json \
+            PANVK_ASYNC=1 PANVK_NO_AFBC=1 \
+            MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink LIBGL_KOPPER_DRI2=true \
             VK_LOADER_DEBUG=all \
             /opt/estenos-g57/probe
 
@@ -88,5 +90,7 @@ jobs:
           sudo chroot /tmp/root /usr/bin/env \
             VK_DRIVER_FILES=/opt/estenos-g57/icd-13.json \
             VK_ICD_FILENAMES=/opt/estenos-g57/icd-13.json \
+            PANVK_ASYNC=1 PANVK_NO_AFBC=1 \
+            MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink LIBGL_KOPPER_DRI2=true \
             VK_LOADER_DEBUG=all \
             /opt/estenos-g57/probe
