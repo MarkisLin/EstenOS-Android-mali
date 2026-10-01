@@ -172,6 +172,16 @@ public class LinuxVulkanDriverManager {
                 || MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL.equals(source);
     }
 
+    /** True only when this is the exact immutable G57 package pinned by this build. */
+    public boolean isCurrentPinnedG57Driver(String id) {
+        JSONObject m = readMeta(id);
+        if (m == null) return false;
+        return MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL.equals(m.optString("source", ""))
+                && MaliKbaseProfiles.G57_RELEASE_TAG.equals(m.optString("sourceTag", ""))
+                && MaliKbaseProfiles.G57_RELEASE_SHA256.equalsIgnoreCase(
+                        m.optString("sourceSha256", ""));
+    }
+
     /** The glibc the driver asks for, as its zip recorded it ("" when the zip did not say). */
     public String getMinGlibc(String id) {
         JSONObject m = readMeta(id);
