@@ -15,7 +15,7 @@ jobs:
       - name: Install Vulkan loader
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libvulkan-dev vulkan-tools unzip build-essential
+          sudo apt-get install -y --no-install-recommends libvulkan-dev vulkan-tools unzip build-essential libxcb-keysyms1
 
       - name: Download exact EstenOS G57 driver
         run: |
