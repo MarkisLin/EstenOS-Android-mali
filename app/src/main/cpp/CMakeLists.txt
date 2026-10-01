@@ -12,6 +12,21 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wno-unused-function -Wimplicit-function
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
+# CI-only Android emulator build. The production APK is still arm64-v8a and builds the complete
+# compositor/audio/frame-generation stack. GitHub's fast emulator is x86_64; for lifecycle/UI
+# smoke tests we only need JNI pieces touched by the front end. This keeps emulator coverage from
+# forcing x86_64 variants of ARM-only runtime libraries into the real application.
+if (DROIDDECK_CI_EMULATOR_STUB)
+    message(STATUS "DroidDeck: CI emulator native stub build")
+    add_library(sdnative SHARED
+            sdnative/sdnative.c
+            sdnative/mali_kbase_probe.c)
+    target_link_libraries(sdnative log)
+
+    add_library(termux SHARED termux/termux.c)
+    return()
+endif()
+
 add_subdirectory(adrenotools)
 
 # DXVK's DXBC->SPIR-V translator (zlib licence), vendored under thirdparty/dxbc from the same
