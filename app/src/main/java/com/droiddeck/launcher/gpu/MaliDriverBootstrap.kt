@@ -44,7 +44,7 @@ object MaliDriverBootstrap {
      * this returns true; if the fresh trusted package fails too, the real diagnostic must be shown.
      */
     fun invalidateAutoManagedAfterPreflightFailure(context: Context, exitCode: Int): Boolean {
-        if (exitCode !in setOf(78, 79, 82, 84)) return false
+        if (exitCode !in setOf(78, 79, 82, 84, 85)) return false
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) return false
 
         // An explicit driver choice belongs to the user even if it originally came from Downloads.
@@ -73,7 +73,17 @@ object MaliDriverBootstrap {
         // make needed() look satisfied while the session still resolves a stale explicit id.
         val selected = SessionPrefs.linuxDriver(context, SessionService.MODE_STEAM)
         if (selected.isNotEmpty()) {
-            if (manager.isInstalled(selected) && manager.compatibilityIssue(selected) == null) return selected
+            if (manager.isInstalled(selected) && manager.compatibilityIssue(selected) == null) {
+                if (manager.isCurrentPinnedG57Driver(selected)
+                    && manager.getIcdApiVersion(selected) != MaliKbaseProfiles.G57_ICD_API_VERSION
+                ) {
+                    progress("Corrigiendo la versión Vulkan del controlador Mali-G57…", -1)
+                    if (!manager.setIcdApiVersion(selected, MaliKbaseProfiles.G57_ICD_API_VERSION)) {
+                        throw IOException("No se pudo corregir el manifiesto Vulkan del controlador Mali-G57.")
+                    }
+                }
+                return selected
+            }
             SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
         }
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) {
