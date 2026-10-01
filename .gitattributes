@@ -1,0 +1,28 @@
+# Line endings the Linux guest depends on.
+#
+# The session scripts under tools/linuxfs/overlay are executed by bash inside the runtime.
+# A CRLF checkout turns "set -u" into "set -u\r" and every function definition into a syntax
+# error, so the session dies with exit status 2 before it prints anything (the 2026-10-01
+# raw=2 launch failure). Windows checkouts run with core.autocrlf=true and this repository
+# had no attributes file, so the working tree was CRLF while the blobs were LF - invisible
+# to git status, fatal on the device.
+#
+tools/linuxfs/overlay/**        text eol=lf
+app/src/main/assets/linuxfs/**  text eol=lf
+
+# Anything else executed on the Linux side.
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# gamescope patches are fed to `patch -p1` inside the Arch Linux ARM container. A CRLF patch
+# file does not match the LF sources it patches; the blobs were already LF, so pin the
+# checkout to match them instead of relying on the build host's git configuration.
+*.patch text eol=lf
+
+# This file drives the conversions above, so it must not be converted itself: with
+# core.autocrlf=true a CRLF checkout would put a trailing CR into every pattern below.
+.gitattributes text eol=lf
+
+# The Windows side keeps its CRLF.
+*.bat      text eol=crlf
+gradlew.bat text eol=crlf

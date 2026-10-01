@@ -141,11 +141,16 @@ if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
           printf '%s\n' "$bl_vk_probe" | grep -E 'deviceName|driverName|apiVersion|driverInfo' | head -12 || true
 
           echo "== preflight Mali Kbase: extensión Vulkan Wayland WSI"
+          # --summary, not the full report. The instance extension list is in both, but the full
+          # one also enumerates surfaces, and with the session's compositor live it can block past
+          # the timeout; killed there, its block-buffered stdout never reaches the pipe and the
+          # grep below reads an empty stream - which was reported as "el ICD no expone
+          # VK_KHR_wayland_surface" and ended the launch with 84 on a driver that exposes it.
           if command -v timeout >/dev/null 2>&1; then
-            timeout 12s vulkaninfo 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
+            timeout 12s vulkaninfo --summary 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
             bl_wayland_wsi_rc=$?
           else
-            vulkaninfo 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
+            vulkaninfo --summary 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
             bl_wayland_wsi_rc=$?
           fi
           if [ "$bl_wayland_wsi_rc" -ne 0 ]; then
@@ -167,11 +172,17 @@ if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
           else
             bl_zink_probe=$(env EGL_PLATFORM=surfaceless MESA_LOADER_DRIVER_OVERRIDE=zink GALLIUM_DRIVER=zink eglinfo -B 2>&1); bl_zink_rc=$?
           fi
-          if [ "$bl_zink_rc" -ne 0 ]; then
+          # eglinfo -B walks every EGL platform and exits non-zero when ANY of them fails. In this
+          # guest GBM and X11 have no device and always do, so the status alone condemned a working
+          # Zink: the Wayland platform reported "zink Vulkan 1.4 (Mali-G725 MC12)" and OpenGL 4.6
+          # while the check printed "FALLÓ rc=2" and ended the session with 80. What matters is
+          # whether a Zink renderer came up at all; the status only decides when none did.
+          if ! printf '%s\n' "$bl_zink_probe" | grep -Eqi 'renderer.*zink'; then
             echo "== preflight Zink sobre Mali Kbase FALLÓ rc=$bl_zink_rc"
             printf '%s\n' "$bl_zink_probe" | tail -80
             exit 80
           fi
+          [ "$bl_zink_rc" -eq 0 ] || echo "== preflight Zink sobre Mali Kbase: rc=$bl_zink_rc por plataformas EGL sin dispositivo; Zink presente"
           printf '%s\n' "$bl_zink_probe" | grep -Ei 'vendor|renderer|version|zink' | head -16 || true
           unset bl_zink_probe bl_zink_rc
         fi

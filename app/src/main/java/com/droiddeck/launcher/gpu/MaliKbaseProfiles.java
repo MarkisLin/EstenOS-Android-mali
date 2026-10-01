@@ -128,7 +128,20 @@ public final class MaliKbaseProfiles {
             Maturity.PUBLIC_EXPERIMENTAL, false
     );
 
-    private static final Profile[] KNOWN = new Profile[]{G615_V11_CSF, G720_V12_CSF, G57_V9_JM, G52_V7_JM};
+    // Phase-0 measured on Redmi 25079RPDCC (MT8799, 2026-10-01): Kbase CSF UAPI 1.30, DDK r49p1,
+    // product code 0xd830 (raw GPU ID 0xd8300015). pan_arch 31:28 of raw ID = 13 (validated
+    // against Mesa pan_arch(): G615 0xb8..->11, G720 0xc8..->12, G925 0xd8..->13). Evidence:
+    // PanVK beta.4 bionic ICD dlopen+CreateDevice PASS, PanVK Test APK 9/9 PASS (GS/tess/XFB/BC),
+    // glibc ICD direct run PASS with kbase_queue_wait completing. No integrated glibc release
+    // asset exists for this profile yet, so recognition only.
+    private static final Profile G925_V13_CSF = new Profile(
+            "g925-v13-csf", "Mali-G925", 13, "csf",
+            1, 30, 30, new long[]{0xd830L},
+            "Redmi 25079RPDCC / MediaTek MT8799 (0xd8300015)",
+            Maturity.PUBLIC_EXPERIMENTAL, false
+    );
+
+    private static final Profile[] KNOWN = new Profile[]{G615_V11_CSF, G720_V12_CSF, G925_V13_CSF, G57_V9_JM, G52_V7_JM};
 
     private MaliKbaseProfiles() {}
 

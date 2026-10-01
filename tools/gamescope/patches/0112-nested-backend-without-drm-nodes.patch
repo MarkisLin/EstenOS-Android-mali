@@ -1,0 +1,65 @@
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 54e4efc..ff33703 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -478,29 +478,45 @@ bool CVulkanDevice::createDevice()
+ 		};
+ 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
+ 
+-		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
++		// Only a session backend drives a display through KMS, and only that one cannot work
++		// without both nodes. A nested backend presents through the host compositor: the one
++		// DRM consumer left is the render-node fd wlroots asks for through the wlr_renderer
++		// callback, and it is a valid state for it to be -1. Kbase-native Mali ICDs (PanVK over
++		// /dev/mali0 on a stock Android kernel) report hasPrimary = false and hasRender = false
++		// by construction, which is exactly the wall the nested Wayland backend died on.
++		// The predicate is the one steamcompmgr.cpp already uses for the same distinction.
++		const bool bNeedsDrmNodes =
++			!GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased();
++
++		if ( bNeedsDrmNodes && !drmProps.hasPrimary ) {
+ 			vk_log.errorf( "physical device has no primary node" );
+ 			return false;
+ 		}
+-		if ( !drmProps.hasRender ) {
++		if ( bNeedsDrmNodes && !drmProps.hasRender ) {
+ 			vk_log.errorf( "physical device has no render node" );
+ 			return false;
+ 		}
+-
+-		dev_t renderDevId = makedev( drmProps.renderMajor, drmProps.renderMinor );
+-		drmDevice *drmDev = nullptr;
+-		if (drmGetDeviceFromDevId(renderDevId, 0, &drmDev) != 0) {
+-			vk_log.errorf( "drmGetDeviceFromDevId() failed" );
+-			return false;
++		if ( !drmProps.hasPrimary || !drmProps.hasRender ) {
++			vk_log.warnf( "no usable DRM node (primary=%d, render=%d): nested presentation only",
++			              drmProps.hasPrimary, drmProps.hasRender );
+ 		}
+-		assert(drmDev->available_nodes & (1 << DRM_NODE_RENDER));
+-		const char *drmRenderName = drmDev->nodes[DRM_NODE_RENDER];
+ 
+-		m_drmRendererFd = open( drmRenderName, O_RDWR | O_CLOEXEC );
+-		drmFreeDevice(&drmDev);
+-		if ( m_drmRendererFd < 0 ) {
+-			vk_log.errorf_errno( "failed to open DRM render node" );
+-			return false;
++		if ( drmProps.hasRender ) {
++			dev_t renderDevId = makedev( drmProps.renderMajor, drmProps.renderMinor );
++			drmDevice *drmDev = nullptr;
++			if (drmGetDeviceFromDevId(renderDevId, 0, &drmDev) != 0) {
++				vk_log.errorf( "drmGetDeviceFromDevId() failed" );
++				return false;
++			}
++			assert(drmDev->available_nodes & (1 << DRM_NODE_RENDER));
++			const char *drmRenderName = drmDev->nodes[DRM_NODE_RENDER];
++
++			m_drmRendererFd = open( drmRenderName, O_RDWR | O_CLOEXEC );
++			drmFreeDevice(&drmDev);
++			if ( m_drmRendererFd < 0 ) {
++				vk_log.errorf_errno( "failed to open DRM render node" );
++				return false;
++			}
+ 		}
+ 
+ 		if ( drmProps.hasPrimary ) {

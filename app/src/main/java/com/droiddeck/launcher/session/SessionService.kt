@@ -407,6 +407,15 @@ class SessionService : Service() {
         val line = command.joinToString(" ") {
             it.replace("\\", "\\\\").replace(" ", "\\ ")
         }
+        // proot's own diagnostics, and anything the guest says before bannerlator-session replaces
+        // its stdout at line 29, used to be dropped: the process was started with no reader, so its
+        // output went to /dev/null and a session that died in its first milliseconds - a staging
+        // failure, a CRLF script, a missing loader - left nothing at all to read, not even the
+        // session.log it would have filled a moment later. Keep the pipe and append what it carries;
+        // once the script redirects its own stdout into BL_LOG the traffic here stops on its own.
+        val hostLog = java.util.function.Consumer<String> { text ->
+            runCatching { sessionLog.appendText(text + "\n") }
+        }
         // One session replacing another (the desktop's Steam launchers): the old proot is killed
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
@@ -434,7 +443,7 @@ class SessionService : Service() {
             } else rawStatus
             Log.i(TAG, "session ended: raw=$rawStatus effective=$effectiveStatus firstFrame=${SessionState.firstFrameSeen}")
             stopSession(effectiveStatus)
-        }, null)
+        }, hostLog)
         Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
         if (gen != sessionGen || !SessionState.running) {
             Log.i(TAG, "session stopped while its guest was starting; taking it down")
