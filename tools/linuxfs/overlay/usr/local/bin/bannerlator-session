@@ -133,7 +133,21 @@ if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
             exit 82
           fi
           printf '%s\n' "$bl_vk_probe" | grep -E 'deviceName|driverName|apiVersion|driverInfo' | head -12 || true
-          unset bl_vk_probe bl_vk_rc
+
+          echo "== preflight Mali Kbase: extensión Vulkan Wayland WSI"
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 12s vulkaninfo 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
+            bl_wayland_wsi_rc=$?
+          else
+            vulkaninfo 2>&1 | grep -Fq 'VK_KHR_wayland_surface'
+            bl_wayland_wsi_rc=$?
+          fi
+          if [ "$bl_wayland_wsi_rc" -ne 0 ]; then
+            echo "== preflight Vulkan sobre Mali Kbase FALLÓ: el ICD no expone VK_KHR_wayland_surface"
+            exit 84
+          fi
+          echo "== preflight Mali Kbase: VK_KHR_wayland_surface disponible"
+          unset bl_vk_probe bl_vk_rc bl_wayland_wsi_rc
         else
           echo "== preflight Mali Kbase: vulkaninfo no está disponible; gamescope hará la prueba Vulkan"
         fi
