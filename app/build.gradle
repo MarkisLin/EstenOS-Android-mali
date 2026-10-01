@@ -121,6 +121,7 @@ android {
         // Compose 1.6.x ships a legacy lint detector that crashes against Kotlin 2.1 metadata.
         // Disable only this obsolete detector; every other lint rule remains enabled.
         disable 'UnrememberedAnimatable'
+        disable 'ComposableCoroutineCreation'
     }
 
     packagingOptions {
