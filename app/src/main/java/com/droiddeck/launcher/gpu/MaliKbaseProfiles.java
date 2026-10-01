@@ -30,6 +30,10 @@ public final class MaliKbaseProfiles {
                     + G57_RELEASE_TAG + "/panvk-g57-kbase-wayland-v1.zip";
     public static final String G57_RELEASE_SHA256 =
             "a7826dfb403e7733313caf8529783a8d34f9c6848ecc0984b93d94f193d9843b";
+    // gamescope 3.16.29 creates its VkInstance as Vulkan 1.3. The generated ICD manifest must
+    // advertise at least that version or the Vulkan loader may reject this ICD before CreateInstance
+    // reaches PanVK, even though the driver itself exposes Vulkan 1.3 on the physical device.
+    public static final String G57_ICD_API_VERSION = "1.3.0";
 
     public enum Maturity {
         QUALIFIED_GLIBC,
@@ -187,6 +191,7 @@ public final class MaliKbaseProfiles {
         out.put("maliProductIds", products);
         out.put("testedDevice", G57_V9_JM.testedDevice);
         out.put("driverVersion", "estenos-g57-kbase-wayland-v1");
+        out.put("apiVersion", G57_ICD_API_VERSION);
         out.put("qualification", "experimental-wayland");
         out.put("minGlibc", "2.38");
         return out;
