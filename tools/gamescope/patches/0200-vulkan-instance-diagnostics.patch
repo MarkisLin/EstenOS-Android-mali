@@ -1,0 +1,65 @@
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0000000..1111111 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -297,7 +297,12 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
+ {
+-	assert(instance);
++	if ( !instance )
++	{
++		vk_log.errorf( "CVulkanDevice::BInit received VK_NULL_HANDLE; preserving vkCreateInstance diagnostics instead of aborting" );
++		return false;
++	}
+ 	assert(!m_bInitialized);
+ 
+ 	g_output.surface = surface;
+@@ -3618,6 +3623,35 @@ VkInstance vulkan_get_instance(void)
+ 	static VkInstance s_pVkInstance = []()
+ 	{
+ 		VkResult result = vulkan_load_module();
++		const char *driverFiles = getenv( "VK_DRIVER_FILES" );
++		const char *icdFiles = getenv( "VK_ICD_FILENAMES" );
++		const char *instanceLayers = getenv( "VK_INSTANCE_LAYERS" );
++		const char *loaderLayers = getenv( "VK_LOADER_LAYERS_ENABLE" );
++		const char *gamescopeWsi = getenv( "ENABLE_GAMESCOPE_WSI" );
++		const char *noDeviceSelect = getenv( "NODEVICE_SELECT" );
++		vk_log.infof(
++			"instance env: VK_DRIVER_FILES=%s VK_ICD_FILENAMES=%s VK_INSTANCE_LAYERS=%s VK_LOADER_LAYERS_ENABLE=%s ENABLE_GAMESCOPE_WSI=%s NODEVICE_SELECT=%s",
++			driverFiles ? driverFiles : "<unset>",
++			icdFiles ? icdFiles : "<unset>",
++			instanceLayers ? instanceLayers : "<unset>",
++			loaderLayers ? loaderLayers : "<unset>",
++			gamescopeWsi ? gamescopeWsi : "<unset>",
++			noDeviceSelect ? noDeviceSelect : "<unset>" );
+ 		if ( result != VK_SUCCESS )
++		{
++			vk_errorf( result, "vulkan_load_module failed" );
+ 			return VkInstance( nullptr );
++		}
++
++		auto pfnEnumerateInstanceVersion =
++			(PFN_vkEnumerateInstanceVersion) g_pfn_vkGetInstanceProcAddr( nullptr, "vkEnumerateInstanceVersion" );
++		if ( pfnEnumerateInstanceVersion )
++		{
++			uint32_t loaderVersion = VK_API_VERSION_1_0;
++			VkResult versionResult = pfnEnumerateInstanceVersion( &loaderVersion );
++			vk_log.infof( "loader instance version: rc=%d version=%u.%u.%u",
++				versionResult,
++				VK_API_VERSION_MAJOR( loaderVersion ),
++				VK_API_VERSION_MINOR( loaderVersion ),
++				VK_API_VERSION_PATCH( loaderVersion ) );
++		}
+ 
+ 		auto instanceExtensions = GetBackend()->GetInstanceExtensions();
+@@ -3657,6 +3691,12 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
+ 		return true;
+ 	}
+ 
++	if ( !instance )
++	{
++		vk_log.errorf( "vulkan_init: no Vulkan instance was created; stopping cleanly" );
++		return false;
++	}
++
+ 	if (!g_device.BInit(instance, surface))
+ 		return false;
