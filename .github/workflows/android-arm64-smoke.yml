@@ -34,7 +34,7 @@ jobs:
           ./tools/gradle/bootstrap-wrapper.sh
 
       - name: Boot ARM64 Android and smoke-test EstenOS
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 30
           target: google_apis
