@@ -41,7 +41,6 @@ if (buildLabel == null || buildLabel.trim().isEmpty()) {
     }
 }
 def buildOrigin = providers.environmentVariable('GITHUB_ACTIONS').getOrNull() == 'true' ? 'remote' : 'local'
-def ciEmulatorAbi = (project.findProperty('ciEmulatorAbi') ?: '').toString().trim()
 def treeState = providers.environmentVariable('DROIDDECK_BUILD_TREE_STATE').getOrNull()
 if (!(treeState in ['clean', 'dirty'])) {
     def status = gitValue(['status', '--porcelain'])
@@ -69,18 +68,11 @@ android {
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
 
         ndk {
-            if (ciEmulatorAbi) {
-                abiFilters ciEmulatorAbi
-            } else {
-                abiFilters 'arm64-v8a'
-            }
+            abiFilters 'arm64-v8a'
         }
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared'
-                if (ciEmulatorAbi) {
-                    arguments '-DDROIDDECK_CI_EMULATOR_STUB=ON'
-                }
             }
         }
     }
@@ -126,6 +118,10 @@ android {
         // fails a release build over it because Google Play will not accept an sdk that old -
         // true, and not something this app can trade away. Every other check stays on.
         disable 'ExpiredTargetSdkVersion'
+        // Compose 1.6.x ships a legacy lint detector that crashes against the Kotlin metadata
+        // emitted by our newer Kotlin compiler. AndroidX removed this detector in 2025 in favour
+        // of RememberInComposition. Disable only the obsolete detector; every other lint rule runs.
+        disable 'UnrememberedAnimatable'
     }
 
     packagingOptions {
