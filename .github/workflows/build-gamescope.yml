@@ -36,10 +36,20 @@ jobs:
           path: |
             gamescope.tzst
             gamescope.tzst.sha256
-      - name: Publish
+      - name: Publish requested release
         if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release create "${{ inputs.tag }}" --title "${{ inputs.tag }}" --notes "gamescope 3.16.29 with tools/gamescope/patches; staged by the apk over /usr/local/bin/gamescope. sha256 $(cut -d' ' -f1 gamescope.tzst.sha256)" gamescope.tzst gamescope.tzst.sha256 || gh release upload "${{ inputs.tag }}" gamescope.tzst gamescope.tzst.sha256 --clobber
+
+      - name: Publish diagnostic p4 on patch push
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=gamescope-3.16.29-p4
+          NOTE="gamescope 3.16.29 diagnostic p4: preserves vkCreateInstance VkResult, logs loader/ICD/layer environment, and exits cleanly instead of assert(instance). sha256 $(cut -d' ' -f1 gamescope.tzst.sha256)"
+          gh release create "$TAG" --title "$TAG" --notes "$NOTE" gamescope.tzst gamescope.tzst.sha256 || gh release upload "$TAG" gamescope.tzst gamescope.tzst.sha256 --clobber
