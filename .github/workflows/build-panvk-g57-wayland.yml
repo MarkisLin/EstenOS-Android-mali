@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           cd src
-          meson setup build-estenos             -Dbuildtype=release             -Dpanvk-use-kbase=true             -Dvulkan-drivers=panfrost             -Dgallium-drivers=             -Dplatforms=x11,wayland             -Dglx=disabled             -Ddebug=false             -Dstrip=true             -Dbuild-tests=false             -Dtools=[]             -Dvideo-codecs=
+          meson setup build-estenos             -Dbuildtype=release             -Dpanvk-use-kbase=true             -Dpanfrost-kmds=kbase             -Dvulkan-drivers=panfrost             -Dgallium-drivers=             -Dplatforms=x11,wayland             -Dglx=disabled             -Ddebug=false             -Dstrip=true             -Dbuild-tests=false             -Dtools=[]             -Dvideo-codecs=
 
       - name: Build PanVK
         run: |
