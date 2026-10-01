@@ -1,0 +1,92 @@
+name: Probe G57 in LinuxFS r9
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/probe-g57-linuxfs-r9.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - name: Prepare host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev build-essential zstd curl unzip
+
+      - name: Download exact LinuxFS r9 and G57 driver
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            'https://github.com/The412Banner/winlator-contents/releases/download/linuxfs-r9/linuxfs.tar.zst' \
+            -o /tmp/linuxfs.tar.zst
+          echo 'd3240c1531531615b0dd06b6ad56e92db9015a8641eb18c3a613835ae45992e7  /tmp/linuxfs.tar.zst' | sha256sum -c -
+          mkdir -p /tmp/root
+          sudo tar --use-compress-program=unzstd -xf /tmp/linuxfs.tar.zst -C /tmp/root
+
+          curl -L --fail --retry 3 \
+            'https://github.com/kankwj5-eng/EstenOS-Android-mali/releases/download/panvk-g57-kbase-wayland-v1/panvk-g57-kbase-wayland-v1.zip' \
+            -o /tmp/g57.zip
+          echo 'a7826dfb403e7733313caf8529783a8d34f9c6848ecc0984b93d94f193d9843b  /tmp/g57.zip' | sha256sum -c -
+          sudo mkdir -p /tmp/root/opt/estenos-g57
+          sudo unzip -q /tmp/g57.zip -d /tmp/root/opt/estenos-g57
+          sudo chroot /tmp/root /usr/bin/ldd /opt/estenos-g57/libvulkan_panfrost.so
+
+      - name: Build gamescope-style Vulkan 1.3 probe
+        run: |
+          cat >/tmp/probe.c <<'EOF'
+          #include <stdio.h>
+          #include <vulkan/vulkan.h>
+          int main(void) {
+            uint32_t loader = VK_API_VERSION_1_0;
+            VkResult er = vkEnumerateInstanceVersion(&loader);
+            printf("loader rc=%d version=%u.%u.%u\n", er,
+              VK_API_VERSION_MAJOR(loader), VK_API_VERSION_MINOR(loader), VK_API_VERSION_PATCH(loader));
+            VkApplicationInfo ai = {
+              .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+              .pApplicationName = "gamescope",
+              .applicationVersion = 1,
+              .pEngineName = "gamescope",
+              .engineVersion = 1,
+              .apiVersion = VK_API_VERSION_1_3,
+            };
+            VkInstanceCreateInfo ci = {
+              .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+              .pApplicationInfo = &ai,
+              .enabledExtensionCount = 0,
+              .ppEnabledExtensionNames = NULL,
+            };
+            VkInstance inst = VK_NULL_HANDLE;
+            VkResult rc = vkCreateInstance(&ci, NULL, &inst);
+            printf("vkCreateInstance rc=%d instance=%p\n", rc, (void*)inst);
+            if (inst) vkDestroyInstance(inst, NULL);
+            return rc == VK_SUCCESS ? 0 : 1;
+          }
+          EOF
+          cc -O2 /tmp/probe.c -lvulkan -o /tmp/probe
+          sudo cp /tmp/probe /tmp/root/opt/estenos-g57/probe
+
+      - name: Probe with historical Stage 14 manifest
+        run: |
+          sudo tee /tmp/root/opt/estenos-g57/icd-11.json >/dev/null <<EOF
+          {"file_format_version":"1.0.0","ICD":{"library_path":"/opt/estenos-g57/libvulkan_panfrost.so","api_version":"1.1.274"}}
+          EOF
+          sudo chroot /tmp/root /usr/bin/env \
+            VK_DRIVER_FILES=/opt/estenos-g57/icd-11.json \
+            VK_ICD_FILENAMES=/opt/estenos-g57/icd-11.json \
+            VK_LOADER_DEBUG=all \
+            /opt/estenos-g57/probe
+
+      - name: Probe with corrected manifest
+        run: |
+          sudo tee /tmp/root/opt/estenos-g57/icd-13.json >/dev/null <<EOF
+          {"file_format_version":"1.0.0","ICD":{"library_path":"/opt/estenos-g57/libvulkan_panfrost.so","api_version":"1.3.0"}}
+          EOF
+          sudo chroot /tmp/root /usr/bin/env \
+            VK_DRIVER_FILES=/opt/estenos-g57/icd-13.json \
+            VK_ICD_FILENAMES=/opt/estenos-g57/icd-13.json \
+            VK_LOADER_DEBUG=all \
+            /opt/estenos-g57/probe
