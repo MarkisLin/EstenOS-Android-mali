@@ -110,7 +110,7 @@ if [ "${BL_GPU_FAMILY:-}" = "mali" ]; then
     if [ -n "${BL_VK_DRIVER:-}" ] && [ -n "${BL_SELECTED_ICD_LIB:-}" ]; then
       _bl_icd_hash=$(sha256sum "$BL_SELECTED_ICD_LIB" 2>/dev/null | awk '{print $1}')
       [ -n "$_bl_icd_hash" ] || _bl_icd_hash=$(basename "$BL_SELECTED_ICD_LIB" | tr -cd 'A-Za-z0-9._-')
-      BL_MALI_PREFLIGHT_MARKER="${XDG_CACHE_HOME:-$HOME/.cache}/droiddeck/mali-preflight/v3-${BL_MALI_KBASE_FRONTEND:-unknown}-${BL_MALI_PRODUCT_ID:-unknown}-${BL_MALI_KBASE_UAPI:-unknown}-${BL_MALI_PROFILE:-unqualified}-${_bl_icd_hash}.ok"
+      BL_MALI_PREFLIGHT_MARKER="${XDG_CACHE_HOME:-$HOME/.cache}/droiddeck/mali-preflight/v4-${BL_MALI_KBASE_FRONTEND:-unknown}-${BL_MALI_PRODUCT_ID:-unknown}-${BL_MALI_KBASE_UAPI:-unknown}-${BL_MALI_PROFILE:-unqualified}-${_bl_icd_hash}.ok"
       mkdir -p "$(dirname "$BL_MALI_PREFLIGHT_MARKER")" 2>/dev/null || true
       if [ -f "$BL_MALI_PREFLIGHT_MARKER" ]; then
         echo "== preflight Mali Kbase: resultado en caché correcto"
@@ -241,6 +241,12 @@ if [ -z "${BL_INSIDE:-}" ]; then
     if [ "$_bl_smoke_rc" -ne 0 ]; then
       echo "== preflight gamescope sobre Mali Kbase FALLÓ rc=$_bl_smoke_rc"
       tail -100 "$_bl_smoke_log" 2>/dev/null || true
+      if grep -q 'vkCreateInstance failed' "$_bl_smoke_log" 2>/dev/null; then
+        _bl_vk_instance=$(grep 'vkCreateInstance failed' "$_bl_smoke_log" | tail -1)
+        echo "== preflight gamescope Vulkan: $_bl_vk_instance"
+        rm -f "$_bl_smoke_log"
+        exit 85
+      fi
       rm -f "$_bl_smoke_log"
       exit 81
     fi
