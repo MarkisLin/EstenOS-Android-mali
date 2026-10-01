@@ -959,6 +959,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             82 -> "El preflight detectó Vulkan por software (lavapipe/llvmpipe) en lugar de la GPU Mali. Revisa el ICD PanVK seleccionado."
             83 -> "Steam terminó con código 0 antes de mostrar el primer fotograma. Ahora se conserva esta pantalla para que puedas ver y compartir el motivo real del arranque fallido."
             84 -> "El controlador PanVK puede enumerar Vulkan, pero no expone VK_KHR_wayland_surface. Gamescope necesita Wayland WSI; EstenOS reinstalará automáticamente el paquete G57 correcto."
+            85 -> "Gamescope no pudo crear una instancia Vulkan. EstenOS detectó el fallo exacto de vkCreateInstance y conservó el VkResult en los registros."
             else -> null
         }
         val message = when {
