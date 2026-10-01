@@ -23,13 +23,13 @@ public final class MaliKbaseProfiles {
     // packages, this asset is an AArch64 GNU/Linux ICD and can be loaded directly by our PRoot
     // runtime. Keep URL + checksum immutable so "Automatic" never turns into a moving target.
     public static final String G57_RELEASE_SOURCE_LABEL = "PanVK-G57-glibc";
-    public static final String G57_RELEASE_REPO = "apexspan-svg/mesa-panvk-mali-g57";
-    public static final String G57_RELEASE_TAG = "v1.0.0-async";
+    public static final String G57_RELEASE_REPO = "kankwj5-eng/EstenOS-Android-mali";
+    public static final String G57_RELEASE_TAG = "panvk-g57-kbase-wayland-v1";
     public static final String G57_RELEASE_URL =
-            "https://github.com/apexspan-svg/mesa-panvk-mali-g57/releases/download/v1.0.0-async/"
-                    + "panvk-mali-g57-v1.0.0-glibc-async.zip";
+            "https://github.com/kankwj5-eng/EstenOS-Android-mali/releases/download/"
+                    + G57_RELEASE_TAG + "/panvk-g57-kbase-wayland-v1.zip";
     public static final String G57_RELEASE_SHA256 =
-            "32f2241c2eba26b87d8dc7fa6c17fe4a2bffd7de8e60596c6203fc7b1f4d247e";
+            "a7826dfb403e7733313caf8529783a8d34f9c6848ecc0984b93d94f193d9843b";
 
     public enum Maturity {
         QUALIFIED_GLIBC,
@@ -186,8 +186,8 @@ public final class MaliKbaseProfiles {
         }
         out.put("maliProductIds", products);
         out.put("testedDevice", G57_V9_JM.testedDevice);
-        out.put("driverVersion", "1.0.0-glibc-async");
-        out.put("qualification", "experimental");
+        out.put("driverVersion", "estenos-g57-kbase-wayland-v1");
+        out.put("qualification", "experimental-wayland");
         out.put("minGlibc", "2.38");
         return out;
     }
