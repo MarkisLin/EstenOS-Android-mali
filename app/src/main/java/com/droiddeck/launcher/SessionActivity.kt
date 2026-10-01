@@ -1022,8 +1022,17 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                     f.readFully(bytes)
                     String(bytes, Charsets.ISO_8859_1)
                 }
-                val meaningful = tail.lineSequence()
-                    .map { it.trim() }
+                val lines = tail.lineSequence().map { it.trim() }.toList()
+                // The assert is only the consequence. Prefer the line immediately telling us why
+                // vkCreateInstance failed, including its VkResult, whenever gamescope emitted it.
+                val createInstance = lines.lastOrNull {
+                    it.contains("vkCreateInstance failed", ignoreCase = true)
+                }
+                val loader = lines.lastOrNull {
+                    it.contains("loader", ignoreCase = true) &&
+                        (it.contains("error", ignoreCase = true) || it.contains("warn", ignoreCase = true))
+                }
+                val meaningful = lines
                     .filter {
                         it.startsWith("== preflight", ignoreCase = true) ||
                             it.startsWith("== Steam terminó", ignoreCase = true) ||
@@ -1033,9 +1042,9 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                             it.contains("error", ignoreCase = true) ||
                             it.contains("falló", ignoreCase = true)
                     }
-                    .toList()
                     .takeLast(4)
-                meaningful.lastOrNull()?.let { "Último diagnóstico: " + it.removePrefix("== ").take(420) }
+                (createInstance ?: loader ?: meaningful.lastOrNull())
+                    ?.let { "Último diagnóstico: " + it.removePrefix("== ").take(420) }
             }
         } catch (e: Exception) {
             null
