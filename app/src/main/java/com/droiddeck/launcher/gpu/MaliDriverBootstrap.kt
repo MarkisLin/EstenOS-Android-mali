@@ -27,7 +27,12 @@ object MaliDriverBootstrap {
             // through ensure() so it can be cleared before an automatic driver is resolved.
             return !manager.isInstalled(chosen) || manager.compatibilityIssue(chosen) != null
         }
-        return LinuxVulkanDriver.automaticDriverId(context).isEmpty()
+        val auto = LinuxVulkanDriver.automaticDriverId(context)
+        if (auto.isEmpty()) return true
+        val profile = MaliKbaseProfiles.forDevice(MaliKbaseProbe.probe())
+        return MaliKbaseProfiles.isPinnedG57(profile)
+            && manager.isAutoManagedTrustedMaliDriver(auto)
+            && !manager.isCurrentPinnedG57Driver(auto)
     }
 
     /**
@@ -68,8 +73,6 @@ object MaliDriverBootstrap {
             if (manager.isInstalled(selected) && manager.compatibilityIssue(selected) == null) return selected
             SessionPrefs.setLinuxDriver(context, SessionService.MODE_STEAM, "")
         }
-        LinuxVulkanDriver.automaticDriverId(context).takeIf { it.isNotEmpty() }?.let { return it }
-
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) {
             throw IOException("Este dispositivo no usa el backend Mali Kbase integrado")
         }
@@ -77,6 +80,21 @@ object MaliDriverBootstrap {
         val probe = MaliKbaseProbe.probe()
         val profile = MaliKbaseProfiles.forDevice(probe)
             ?: throw IOException("${MaliKbaseProfiles.readiness(probe)}. Todavía no hay un controlador automático calificado para este teléfono.")
+
+        LinuxVulkanDriver.automaticDriverId(context).takeIf { it.isNotEmpty() }?.let { auto ->
+            if (!MaliKbaseProfiles.isPinnedG57(profile) || manager.isCurrentPinnedG57Driver(auto)) {
+                return auto
+            }
+            // Replace only our own obsolete G57 package. A manually imported compatible ICD remains
+            // authoritative even when Automatic selected it.
+            if (manager.isAutoManagedTrustedMaliDriver(auto)) {
+                progress("Actualizando el controlador Mali-G57 para Wayland…", -1)
+                manager.removeDriver(auto)
+                if (TurnipReleases.isDownloaded(context, auto)) TurnipReleases.forget(context, auto)
+            } else {
+                return auto
+            }
+        }
         if (!profile.glibcReleaseIntegrated) {
             throw IOException("${profile.displayGpu} está reconocida, pero su controlador PanVK-Kbase glibc todavía es experimental y no se instala automáticamente.")
         }
