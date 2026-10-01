@@ -148,7 +148,7 @@ object MaliDriverBootstrap {
         profile: MaliKbaseProfiles.Profile,
         progress: (stage: String, percent: Int) -> Unit,
     ): String {
-        val archive = java.io.File(context.cacheDir, "panvk-g57-v1.0.0-glibc-async.zip")
+        val archive = java.io.File(context.cacheDir, "panvk-g57-kbase-wayland-v1.zip")
         try {
             progress("Descargando ${profile.displayGpu} / PanVK JM…", 0)
             val ok = Downloader.downloadFile(
@@ -174,7 +174,7 @@ object MaliDriverBootstrap {
             progress("Instalando PanVK Mali-G57 JM (glibc)…", -1)
             val id = manager.installReleaseDriver(
                 Uri.fromFile(archive),
-                "PanVK Mali-G57 JM glibc async",
+                "EstenOS PanVK Mali-G57 JM · X11+Wayland",
                 MaliKbaseProfiles.G57_RELEASE_SOURCE_LABEL,
                 MaliKbaseProfiles.G57_RELEASE_TAG,
             )
