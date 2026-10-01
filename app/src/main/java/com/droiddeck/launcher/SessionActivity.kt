@@ -958,6 +958,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             81 -> "Vulkan y Zink funcionan, pero gamescope no pudo iniciar sobre el backend Wayland."
             82 -> "El preflight detectó Vulkan por software (lavapipe/llvmpipe) en lugar de la GPU Mali. Revisa el ICD PanVK seleccionado."
             83 -> "Steam terminó con código 0 antes de mostrar el primer fotograma. Ahora se conserva esta pantalla para que puedas ver y compartir el motivo real del arranque fallido."
+            84 -> "El controlador PanVK puede enumerar Vulkan, pero no expone VK_KHR_wayland_surface. Gamescope necesita Wayland WSI; EstenOS reinstalará automáticamente el paquete G57 correcto."
             else -> null
         }
         val message = when {
