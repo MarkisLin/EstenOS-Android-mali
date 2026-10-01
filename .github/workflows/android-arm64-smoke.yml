@@ -51,33 +51,13 @@ jobs:
           disable-animations: true
           script: |
             set -euo pipefail
-            mkdir -p artifacts
             ./gradlew :app:assembleDebug -PndkVersion=27.3.13750724 --stacktrace
-            APK="$(find app/build/outputs/apk/debug -name '*.apk' | head -n1)"
-            test -n "$APK"
-            adb install -r "$APK"
-            adb logcat -c
-            adb shell monkey -p com.droiddeck.launcher -c android.intent.category.LAUNCHER 1
-            sleep 15
-            adb shell dumpsys activity activities > artifacts/dumpsys-activity.txt || true
-            adb logcat -d -v threadtime > artifacts/logcat.txt || true
-            adb exec-out screencap -p > artifacts/smoke.png || true
-            PID="$(adb shell pidof com.droiddeck.launcher | tr -d '\r' || true)"
-            if [ -z "$PID" ]; then
-              echo "EstenOS process exited during ARM64 smoke test"
-              tail -n 250 artifacts/logcat.txt || true
-              exit 1
-            fi
-            if grep -E 'FATAL EXCEPTION|AndroidRuntime.*Process: com\.droiddeck\.launcher' artifacts/logcat.txt; then
-              echo "Android runtime crash detected"
-              exit 1
-            fi
-            echo "EstenOS alive with pid $PID"
+            bash tools/ci/emulator-smoke.sh
 
       - name: Upload smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-arm64-smoke-diagnostics
-          path: artifacts/
+          path: build/ci-emulator/
           if-no-files-found: warn
