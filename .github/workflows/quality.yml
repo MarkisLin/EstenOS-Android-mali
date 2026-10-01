@@ -38,7 +38,16 @@ jobs:
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug -PndkVersion=27.3.13750724 --stacktrace
 
       - name: Python regression tests
-        run: python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+        run: |
+          python3 -m compileall -q tools
+          python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+
+      - name: Workflow syntax (actionlint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
 
       - name: Shell syntax + ShellCheck
         shell: bash
@@ -46,10 +55,16 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
+          failures=0
           while IFS= read -r -d '' file; do
-            bash -n "$file"
-            shellcheck -S error "$file"
-          done < <(find tools -type f -name '*.sh' -print0)
+            first="$(head -n1 "$file" || true)"
+            if [[ "$first" =~ (/bin/(ba)?sh|/usr/bin/env[[:space:]]+(ba)?sh) ]]; then
+              echo "checking $file"
+              bash -n "$file" || failures=1
+              shellcheck -x -S error "$file" || failures=1
+            fi
+          done < <(find tools -type f -print0)
+          exit "$failures"
 
       - name: Validate executable runtime scripts
         shell: bash
