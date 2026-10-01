@@ -41,7 +41,7 @@ object MaliDriverBootstrap {
      * this returns true; if the fresh trusted package fails too, the real diagnostic must be shown.
      */
     fun invalidateAutoManagedAfterPreflightFailure(context: Context, exitCode: Int): Boolean {
-        if (exitCode !in setOf(78, 79, 82)) return false
+        if (exitCode !in setOf(78, 79, 82, 84)) return false
         if (DeviceSupport.guestGpuBackend() != DeviceSupport.GuestGpuBackend.MALI_KBASE) return false
 
         // An explicit driver choice belongs to the user even if it originally came from Downloads.
