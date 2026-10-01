@@ -238,10 +238,10 @@ if [ -z "${BL_INSIDE:-}" ]; then
     echo "== preflight Mali Kbase: prueba mínima de gamescope/Wayland"
     _bl_smoke_log=$(mktemp /tmp/droiddeck-gamescope-smoke.XXXXXX)
     if command -v timeout >/dev/null 2>&1; then
-      timeout 15s env VK_LOADER_DEBUG=error,warn gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
+      timeout 15s env NODEVICE_SELECT=1 DISABLE_GAMESCOPE_WSI=1 VK_LOADER_DEBUG=all gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
       _bl_smoke_rc=$?
     else
-      env VK_LOADER_DEBUG=error,warn gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
+      env NODEVICE_SELECT=1 DISABLE_GAMESCOPE_WSI=1 VK_LOADER_DEBUG=all gamescope --backend wayland --expose-wayland -W 64 -H 64 -w 64 -h 64 -- /bin/sleep 3 >"$_bl_smoke_log" 2>&1
       _bl_smoke_rc=$?
     fi
     if [ "$_bl_smoke_rc" -ne 0 ]; then
@@ -294,6 +294,12 @@ if [ -z "${BL_INSIDE:-}" ]; then
     echo "== gamescope: mangoapp activado ($(command -v mangoapp), configuración $MANGOHUD_CONFIGFILE)"
   fi
   export BL_INSIDE=1
+  if [ "${BL_GUEST_GPU_BACKEND:-}" = mali-kbase ]; then
+    echo "== gamescope Mali: un solo ICD; capas implícitas de selección desactivadas para el compositor"
+    exec env NODEVICE_SELECT=1 DISABLE_GAMESCOPE_WSI=1 VK_LOADER_DEBUG=all \
+      gamescope "${args[@]}" -- \
+      env -u VK_LOADER_DEBUG -u NODEVICE_SELECT -u DISABLE_GAMESCOPE_WSI "$0" "$mode" "$@"
+  fi
   exec gamescope "${args[@]}" -- "$0" "$mode" "$@"
 fi
 
